@@ -284,7 +284,7 @@ ranking candidate set = ALL_CANDIDATES
 
 页面用 `QingbiaoScenario.inputRevision` 与 `Project.qingbiaoInputRevision` 区分“尚未计算 / 当前有效 / 已过期”。规则、项目参数和候选单位写入已接入修订号；公共 `CompanyPerformance` 的新增或修改尚不能反向定位所有受影响项目，因此履约变化导致的自动失效仍是后续一致性工作。
 
-新版清标查询、计算和 UI 已不再假设项目只有 4 个 K2 场景。底层仍把 `ruleIndex=1` 的四条新结果标记为 `isLegacy=true`，仅供本步骤未修改的旧定标与 analysis 兼容读取；这不是新版页面的数据筛选条件，也不赋予规则 1 特殊业务含义。
+新版清标、定标和 analysis 已不再假设项目只有 4 个 K2 场景。底层 `isLegacy` 标记仅用于保留历史兼容数据；当前定标目录和全场景 analysis 都按明确的 `sourceQingbiaoScenarioId`、规则版本与输入修订读取，不按 `ruleIndex=1` 或 `isLegacy=true` 筛选，也不赋予规则 1 特殊业务含义。
 
 ## 13. 暂缓事项
 
@@ -293,3 +293,13 @@ ranking candidate set = ALL_CANDIDATES
 - 正式分析报告导出和版本历史。
 - 用户认证、权限和审计。
 - PostgreSQL 生产部署、备份恢复和浏览器端自动化。
+
+## 14. Step 7：全量定标与派生决策分析（2026-08-24）
+
+全场景 Application 入口以当前 16 个清标来源为输入，复用既有 `calculateDingbiaoSimulation()` 和定标 repository 保存入口，形成理论最多 `16×3×3=144` 个定标场景。批处理先在短事务中仅清除本项目当前 16 个来源的旧结果，再逐来源使用短事务保存最多 9 个场景；重跑不会追加第 145 条，也不会删除其他项目或非目标来源。
+
+`src/server/repositories/analysis-repository.ts` 读取 current 的清标/定标结果，按项目修订、规则版本和来源修订过滤旧结果。`src/domain/analysis/calculator.ts` 只执行计数、分组、平均排名和稳定排序，不调用或复制 K1、B、M、差值、排名、winner 公式。统一的 `ScenarioAnalysisRecord` 保留 rule、K2、N、抽值、来源、胜出单位、我方排名/差值、M、K1 和保存时间。
+
+分析结果同时暴露固定 `theoreticalScenarioCount=144` 与实际 `validScenarioCount`。一个清标来源只有 4 家时仅有 N=4/3 的 6 个结果，项目实际分母为 141；所有胜出率均展示 `wins/valid`。未设置我方单位不会阻断胜出单位分布和明细，也不会显示伪造的 0% 我方胜出率。
+
+当前分析是保存结果的派生视图，没有新增 analysis batch 表或 Prisma migration。版本完整性由 current input revision、Qingbiao/Dingbiao rule version、source revision、一次运行共享的 `calculatedAt`、稳定来源 ID 和批量重算前清理共同保证。未来若需要保留多批历史、运行恢复或并发批次仲裁，再引入显式 `GlobalAnalysisRun`。详细流程见 `docs/global-analysis-flow.md`。

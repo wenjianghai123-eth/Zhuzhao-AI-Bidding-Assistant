@@ -24,6 +24,9 @@
     "verify:performance": "tsx scripts/verify-performance-flow.ts",
     "verify:qingbiao": "tsx scripts/verify-qingbiao-flow.ts",
     "verify:dingbiao": "tsx scripts/verify-dingbiao-flow.ts",
+    "verify:global-analysis": "tsx scripts/verify-global-analysis-flow.ts",
+    "verify:business-golden": "vitest run src/domain/regression/20260820-full-golden.test.ts --reporter=verbose",
+    "verify:decimal-persistence": "vitest run src/server/db/decimal-persistence.test.ts src/domain/regression/decimal-persistence.test.ts src/domain/regression/20260820-full-golden.test.ts --reporter=verbose",
     "verify:excel-import": "tsx scripts/verify-excel-import-flow.ts",
     "db:studio": "prisma studio"
   },

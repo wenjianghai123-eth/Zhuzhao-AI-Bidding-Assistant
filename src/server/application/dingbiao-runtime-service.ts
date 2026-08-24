@@ -2,6 +2,7 @@ import {
   calculateDingbiaoForQingbiaoScenario,
   getDingbiaoPageData,
 } from "@/server/application/dingbiao-service";
+import { calculateAllDingbiaoScenarios } from "@/server/application/global-dingbiao-service";
 import { getRuntimeQingbiaoScenarioCatalog } from "@/server/application/qingbiao-runtime-service";
 import { prismaDingbiaoRepository } from "@/server/repositories/dingbiao-repository";
 
@@ -23,4 +24,8 @@ export function calculateAndSaveRuntimeDingbiao(
     sourceQingbiaoScenarioId,
     runtimeDependencies,
   );
+}
+
+export function calculateAllRuntimeDingbiaoScenarios(projectId: string) {
+  return calculateAllDingbiaoScenarios(projectId, runtimeDependencies);
 }

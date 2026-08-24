@@ -3,12 +3,17 @@ import {
   type DecisionAnalysisResult,
 } from "@/domain/analysis";
 import type { AnalysisRepository } from "@/server/repositories/analysis-repository";
+import type { AnalysisCalculationState } from "@/server/repositories/analysis-repository";
 
 export interface AnalysisPageData {
   projectId: string;
   projectName: string;
-  qingbiaoResultsAreCurrent: boolean;
-  dingbiaoResultsAreCurrent: boolean;
+  qingbiaoState: AnalysisCalculationState;
+  dingbiaoState: AnalysisCalculationState;
+  currentQingbiaoScenarioCount: number;
+  requiredQingbiaoScenarioCount: number;
+  currentDingbiaoScenarioCount: number;
+  expectedValidDingbiaoScenarioCount: number;
   analysisResult: DecisionAnalysisResult;
 }
 
@@ -24,9 +29,15 @@ export async function getAnalysisPageData(
   return {
     projectId: snapshot.projectId,
     projectName: snapshot.projectName,
-    qingbiaoResultsAreCurrent: snapshot.qingbiaoResultsAreCurrent,
-    dingbiaoResultsAreCurrent: snapshot.dingbiaoResultsAreCurrent,
+    qingbiaoState: snapshot.qingbiaoState,
+    dingbiaoState: snapshot.dingbiaoState,
+    currentQingbiaoScenarioCount: snapshot.currentQingbiaoScenarioCount,
+    requiredQingbiaoScenarioCount: snapshot.requiredQingbiaoScenarioCount,
+    currentDingbiaoScenarioCount: snapshot.currentDingbiaoScenarioCount,
+    expectedValidDingbiaoScenarioCount:
+      snapshot.expectedValidDingbiaoScenarioCount,
     analysisResult: buildDecisionAnalysis({
+      projectId: snapshot.projectId,
       candidates: snapshot.candidates,
       qingbiaoScenarios: snapshot.qingbiaoScenarios,
       dingbiaoScenarios: snapshot.dingbiaoScenarios,

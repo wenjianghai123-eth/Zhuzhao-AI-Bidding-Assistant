@@ -78,6 +78,7 @@ function createDependencies(input?: {
 
   const repository: DingbiaoRepository = {
     findProject: async () => project,
+    countCurrentQingbiaoSources: async () => catalog.scenarios.length,
     findSavedCalculation: async () => savedCalculation,
     findSavedCalculationBySourceScenario: async (sourceScenarioId) =>
       savedCalculation?.sourceQingbiaoScenarioId === sourceScenarioId
@@ -97,6 +98,10 @@ function createDependencies(input?: {
       };
       return { status: "saved" };
     },
+    clearCalculationsForSources: async () => ({
+      status: "cleared",
+      deletedScenarioCount: 0,
+    }),
   };
   const catalogStatus = input?.catalogStatus ?? "current";
   const dependencies: DingbiaoServiceDependencies = {

@@ -430,18 +430,16 @@ describe("MVP empty-database acceptance flow", () => {
     if (!analysisPage || analysisPage.analysisResult.status !== "ready") {
       throw new Error("Decision analysis should be ready after calculations.");
     }
-    expect(analysisPage.qingbiaoResultsAreCurrent).toBe(true);
-    expect(analysisPage.dingbiaoResultsAreCurrent).toBe(true);
+    expect(analysisPage.qingbiaoState).toBe("current");
+    expect(analysisPage.dingbiaoState).toBe("incomplete");
     expect(analysisPage.analysisResult.analysis.candidateCount).toBe(6);
     expect(
-      analysisPage.analysisResult.analysis.qingbiaoCompetitiveness,
-    ).toHaveLength(4);
+      analysisPage.analysisResult.analysis.sourceAnalysis,
+    ).toHaveLength(16);
     expect(
-      analysisPage.analysisResult.analysis.dingbiaoCompetitiveness,
+      analysisPage.analysisResult.analysis.scenarioRecords,
     ).toHaveLength(9);
-    expect(analysisPage.analysisResult.analysis.simulationWinRates).toHaveLength(
-      3,
-    );
+    expect(analysisPage.analysisResult.analysis.byFinalistCount).toHaveLength(3);
     expect(analysisPage.analysisResult.analysis.summaries.length).toBeGreaterThan(
       0,
     );

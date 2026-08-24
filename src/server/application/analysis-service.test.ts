@@ -9,8 +9,12 @@ import type {
 const snapshot: AnalysisProjectSnapshot = {
   projectId: "project-1",
   projectName: "测试项目",
-  qingbiaoResultsAreCurrent: true,
-  dingbiaoResultsAreCurrent: false,
+  qingbiaoState: "current",
+  dingbiaoState: "not_calculated",
+  currentQingbiaoScenarioCount: 16,
+  requiredQingbiaoScenarioCount: 16,
+  currentDingbiaoScenarioCount: 0,
+  expectedValidDingbiaoScenarioCount: 0,
   candidates: [
     {
       candidateId: "candidate-1",
@@ -18,12 +22,20 @@ const snapshot: AnalysisProjectSnapshot = {
       isOurCompany: true,
     },
   ],
-  qingbiaoScenarios: [0, 1, 2, 3].map((qingbiaoK2) => ({
-    qingbiaoK2: qingbiaoK2 as 0 | 1 | 2 | 3,
-    candidates: [
-      { candidateId: "candidate-1", totalScore: "99", finalRank: 1 },
-    ],
-  })),
+  qingbiaoScenarios: ([1, 2, 3, 4] as const).flatMap((ruleIndex) =>
+    ([0, 1, 2, 3] as const).map((qingbiaoK2Value) => ({
+      sourceQingbiaoScenarioId: `source-${ruleIndex}-${qingbiaoK2Value}`,
+      exclusionRuleId: `rule-${ruleIndex}`,
+      ruleIndex,
+      exclusionRuleLabel: null,
+      qingbiaoK2Value,
+      qingbiaoK1Fraction: "0.1",
+      referencePriceB: "910",
+      candidates: [
+        { candidateId: "candidate-1", totalScore: "99", finalRank: 1 },
+      ],
+    })),
+  ),
   dingbiaoScenarios: [],
 };
 
@@ -47,8 +59,9 @@ describe("getAnalysisPageData", () => {
     expect(result).toMatchObject({
       projectId: "project-1",
       projectName: "测试项目",
-      qingbiaoResultsAreCurrent: true,
-      dingbiaoResultsAreCurrent: false,
+      qingbiaoState: "current",
+      dingbiaoState: "not_calculated",
+      currentQingbiaoScenarioCount: 16,
       analysisResult: { status: "ready" },
     });
   });

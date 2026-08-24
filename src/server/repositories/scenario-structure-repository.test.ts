@@ -25,6 +25,8 @@ import {
 } from "@/domain/qingbiao";
 import { PrismaClient } from "@/generated/prisma/client";
 import { ensureQingbiaoExclusionRules } from "@/server/application/qingbiao-exclusion-rule-service";
+import { calculateAllDingbiaoScenarios } from "@/server/application/global-dingbiao-service";
+import type { createPrismaAnalysisRepository } from "@/server/repositories/analysis-repository";
 import type { createPrismaDingbiaoRepository } from "@/server/repositories/dingbiao-repository";
 import type { createPrismaQingbiaoExclusionRuleRepository } from "@/server/repositories/qingbiao-exclusion-rule-repository";
 import type { createPrismaQingbiaoRepository } from "@/server/repositories/qingbiao-repository";
@@ -60,6 +62,9 @@ let defaultPrismaClient: PrismaClient | undefined;
 let createDingbiaoRepository:
   | typeof createPrismaDingbiaoRepository
   | undefined;
+let createAnalysisRepository:
+  | typeof createPrismaAnalysisRepository
+  | undefined;
 let createExclusionRuleRepository:
   | typeof createPrismaQingbiaoExclusionRuleRepository
   | undefined;
@@ -79,6 +84,13 @@ function requireDingbiaoRepositoryFactory() {
     throw new Error("Dingbiao repository factory was not initialized.");
   }
   return createDingbiaoRepository;
+}
+
+function requireAnalysisRepositoryFactory() {
+  if (!createAnalysisRepository) {
+    throw new Error("Analysis repository factory was not initialized.");
+  }
+  return createAnalysisRepository;
 }
 
 function requireExclusionRuleRepositoryFactory() {
@@ -237,6 +249,121 @@ function calculateV2ScenarioBatch(input: {
   );
 }
 
+async function saveFullQingbiaoBatch() {
+  await ensureRules();
+  const repository = requireQingbiaoRepositoryFactory()(requireClient());
+  const project = await repository.findProject(projectId);
+  if (!project) {
+    throw new Error("Expected a Qingbiao project snapshot.");
+  }
+  const saved = await repository.saveCalculationV2({
+    projectId,
+    expectedInputRevision: project.inputRevision,
+    ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+    scenarios: calculateV2ScenarioBatch({ project }),
+  });
+  if (saved.status !== "saved") {
+    throw new Error(`Expected Qingbiao save, received ${saved.status}.`);
+  }
+  return repository;
+}
+
+async function createOtherProjectDingbiaoFixture() {
+  const prismaClient = requireClient();
+  const otherProjectId = "scenario-structure-other-project";
+  const otherCandidateIds = ["other-c1", "other-c2", "other-c3"] as const;
+  const otherBidPrices = ["900", "910", "920"] as const;
+  const otherRates = ["0.1", "0.11", "0.12"] as const;
+  const otherDifferences = ["0", "1", "2"] as const;
+  const otherPriceScores = ["40", "39", "38"] as const;
+  const otherTotalScores = ["60", "59", "58"] as const;
+  await prismaClient.project.create({
+    data: {
+      id: otherProjectId,
+      name: "其他项目",
+      rule: {
+        create: {
+          maxBidPrice: "1000",
+          nonCompetitiveFee: "100",
+          totalBidPriceScore: "40",
+          rankDeduction: "2",
+          finalDrawValue1: "0",
+          finalDrawValue2: "0.01",
+          finalDrawValue3: "0.02",
+        },
+      },
+      candidates: {
+        create: otherCandidateIds.map((id, index) => ({
+          id,
+          companyName: `其他单位 ${index + 1}`,
+          bidPrice: otherBidPrices[index] ?? "0",
+          netDiscountRate: otherRates[index] ?? "0",
+          trademarkScore: "0",
+          technicalScore: "0",
+          similarExperienceScore: "0",
+          otherScore: "0",
+        })),
+      },
+      qingbiaoExclusionRules: {
+        create: { id: "other-rule-1", ruleIndex: 1 },
+      },
+    },
+  });
+  await prismaClient.qingbiaoScenario.create({
+    data: {
+      id: "other-qingbiao-source",
+      projectId: otherProjectId,
+      exclusionRuleId: "other-rule-1",
+      qingbiaoK2: 0,
+      referencePriceB: "910",
+      qingbiaoK1: "0.1",
+      inputRevision: 1,
+      ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+      results: {
+        create: otherCandidateIds.map((candidateId, index) => ({
+          candidateId,
+          performanceAverage: "80",
+          performanceScore: "10",
+          priceDifference: otherDifferences[index] ?? "0",
+          priceRank: index + 1,
+          priceScore: otherPriceScores[index] ?? "0",
+          totalScore: otherTotalScores[index] ?? "0",
+          finalRank: index + 1,
+        })),
+      },
+    },
+  });
+  await prismaClient.dingbiaoScenario.create({
+    data: {
+      id: "other-dingbiao-scenario",
+      projectId: otherProjectId,
+      qingbiaoScenarioId: "other-qingbiao-source",
+      sourceQingbiaoScenarioId: "other-qingbiao-source",
+      qingbiaoK2: 0,
+      finalistCount: 3,
+      finalDrawSlot: 1,
+      finalDrawIndex: 1,
+      finalDrawValue: "0",
+      dingbiaoK1: "0.1",
+      benchmarkPriceM: "910",
+      inputRevision: 1,
+      ruleVersion: DINGBIAO_RULE_VERSION,
+      results: {
+        create: otherCandidateIds.map((candidateId, index) => ({
+          candidateId,
+          sourceQingbiaoRank: index + 1,
+          bidPrice: otherBidPrices[index] ?? "0",
+          netDiscountRateSnapshot: otherRates[index] ?? "0",
+          differenceToM: ["0", "10", "20"][index] ?? "0",
+          rank: index + 1,
+          isWinner: index === 0,
+        })),
+      },
+    },
+  });
+  return otherProjectId;
+}
+
 function dingbiaoScenarioFixture(input: {
   finalistCount: DingbiaoFinalistCount;
   finalDrawIndex: FinalDrawIndex;
@@ -289,17 +416,20 @@ beforeAll(async () => {
   client = new PrismaClient({ adapter });
   process.env.DATABASE_URL = `file:${databasePath.replaceAll("\\", "/")}`;
   const [
+    analysisModule,
     dingbiaoModule,
     exclusionRuleModule,
     qingbiaoModule,
     databaseModule,
   ] =
     await Promise.all([
+      import("@/server/repositories/analysis-repository"),
       import("@/server/repositories/dingbiao-repository"),
       import("@/server/repositories/qingbiao-exclusion-rule-repository"),
       import("@/server/repositories/qingbiao-repository"),
       import("@/server/db/prisma"),
     ]);
+  createAnalysisRepository = analysisModule.createPrismaAnalysisRepository;
   createDingbiaoRepository = dingbiaoModule.createPrismaDingbiaoRepository;
   createExclusionRuleRepository =
     exclusionRuleModule.createPrismaQingbiaoExclusionRuleRepository;
@@ -752,5 +882,136 @@ describe("dingbiao source scenario and draw-index identity", () => {
     expect(finalistSnapshot?.sourceQingbiaoRank).toBe(1);
     expect(finalistSnapshot?.bidPrice.toString()).toBe("800");
     expect(finalistSnapshot?.netDiscountRateSnapshot?.toString()).toBe("0.1");
+  });
+});
+
+describe("global Dingbiao batch and derived analysis persistence", () => {
+  it("persists exactly 144 project-local scenarios and keeps 144 after rerun", async () => {
+    const qingbiaoRepository = await saveFullQingbiaoBatch();
+    const otherProjectId = await createOtherProjectDingbiaoFixture();
+    const dingbiaoRepository =
+      requireDingbiaoRepositoryFactory()(requireClient());
+    const dependencies = {
+      repository: dingbiaoRepository,
+      qingbiaoScenarioCatalogReader: async () => {
+        const catalog =
+          await qingbiaoRepository.findScenarioCatalog(projectId);
+        return catalog
+          ? ({ status: "current", catalog } as const)
+          : ({ status: "not_calculated" } as const);
+      },
+    };
+
+    const first = await calculateAllDingbiaoScenarios(
+      projectId,
+      dependencies,
+    );
+    expect(first).toMatchObject({
+      status: "success",
+      successfulSourceCount: 16,
+      validScenarioCount: 144,
+      theoreticalScenarioCount: 144,
+    });
+    expect(
+      await requireClient().dingbiaoScenario.count({ where: { projectId } }),
+    ).toBe(144);
+    expect(
+      await requireClient().dingbiaoScenario.count({
+        where: { projectId: otherProjectId },
+      }),
+    ).toBe(1);
+
+    const second = await calculateAllDingbiaoScenarios(
+      projectId,
+      dependencies,
+    );
+    expect(second).toMatchObject({
+      status: "success",
+      validScenarioCount: 144,
+    });
+    expect(
+      await requireClient().dingbiaoScenario.count({ where: { projectId } }),
+    ).toBe(144);
+    expect(
+      await requireClient().dingbiaoScenario.count({
+        where: { projectId: otherProjectId },
+      }),
+    ).toBe(1);
+
+    const analysis = await requireAnalysisRepositoryFactory()(
+      requireClient(),
+    ).findProjectSnapshot(projectId);
+    expect(analysis).toMatchObject({
+      qingbiaoState: "current",
+      dingbiaoState: "current",
+      currentQingbiaoScenarioCount: 16,
+      currentDingbiaoScenarioCount: 144,
+      expectedValidDingbiaoScenarioCount: 144,
+    });
+    expect(analysis?.dingbiaoScenarios).toHaveLength(144);
+
+    const oneScenario = await requireClient().dingbiaoScenario.findFirst({
+      where: { projectId },
+      select: { id: true },
+    });
+    if (!oneScenario) {
+      throw new Error("Expected one persisted Dingbiao scenario.");
+    }
+    await requireClient().dingbiaoScenario.update({
+      where: { id: oneScenario.id },
+      data: { updatedAt: new Date("2030-01-01T00:00:00.000Z") },
+    });
+    const mixedBatchAnalysis = await requireAnalysisRepositoryFactory()(
+      requireClient(),
+    ).findProjectSnapshot(projectId);
+    expect(mixedBatchAnalysis?.dingbiaoState).toBe("incomplete");
+  });
+
+  it("persists and reports 141/144 when one Qingbiao source has only four finalists", async () => {
+    const qingbiaoRepository = await saveFullQingbiaoBatch();
+    const partialSource = await requireClient().qingbiaoScenario.findFirst({
+      where: {
+        projectId,
+        exclusionRule: { ruleIndex: 4 },
+        qingbiaoK2: 3,
+      },
+      select: { id: true },
+    });
+    if (!partialSource) {
+      throw new Error("Expected the partial Qingbiao source fixture.");
+    }
+    await requireClient().qingbiaoResult.deleteMany({
+      where: { scenarioId: partialSource.id, finalRank: { gt: 4 } },
+    });
+
+    const result = await calculateAllDingbiaoScenarios(projectId, {
+      repository: requireDingbiaoRepositoryFactory()(requireClient()),
+      qingbiaoScenarioCatalogReader: async () => {
+        const catalog =
+          await qingbiaoRepository.findScenarioCatalog(projectId);
+        return catalog
+          ? ({ status: "current", catalog } as const)
+          : ({ status: "not_calculated" } as const);
+      },
+    });
+    expect(result).toMatchObject({
+      status: "success",
+      successfulSourceCount: 16,
+      validScenarioCount: 141,
+      theoreticalScenarioCount: 144,
+    });
+    expect(
+      await requireClient().dingbiaoScenario.count({ where: { projectId } }),
+    ).toBe(141);
+
+    const analysis = await requireAnalysisRepositoryFactory()(
+      requireClient(),
+    ).findProjectSnapshot(projectId);
+    expect(analysis).toMatchObject({
+      qingbiaoState: "current",
+      dingbiaoState: "current",
+      currentDingbiaoScenarioCount: 141,
+      expectedValidDingbiaoScenarioCount: 141,
+    });
   });
 });

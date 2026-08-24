@@ -4,14 +4,32 @@ import type {
   AnalysisQingbiaoScenarioInput,
 } from "@/domain/analysis";
 import {
+  DINGBIAO_FINALIST_COUNTS,
+  DINGBIAO_RULE_VERSION,
   isDingbiaoFinalistCount,
-  isFinalDrawSlot,
+  isFinalDrawIndex,
 } from "@/domain/dingbiao";
-import { isQingbiaoK2 } from "@/domain/qingbiao";
+import {
+  isQingbiaoExclusionRuleIndex,
+  isQingbiaoK2,
+  QINGBIAO_20260820_RULE_VERSION,
+  QINGBIAO_EXCLUSION_RULE_INDEXES,
+  QINGBIAO_K2_VALUES,
+} from "@/domain/qingbiao";
+import type { PrismaClient } from "@/generated/prisma/client";
+import { deserializePersistedDecimal } from "@/server/db/decimal-persistence";
 import { prisma } from "@/server/db/prisma";
 
 const CURRENT_QINGBIAO_VERSION = 1;
 const CURRENT_DINGBIAO_VERSION = 1;
+const REQUIRED_QINGBIAO_SOURCE_COUNT =
+  QINGBIAO_EXCLUSION_RULE_INDEXES.length * QINGBIAO_K2_VALUES.length;
+
+export type AnalysisCalculationState =
+  | "not_calculated"
+  | "incomplete"
+  | "stale"
+  | "current";
 
 export interface AnalysisProjectSnapshot {
   projectId: string;
@@ -19,170 +37,331 @@ export interface AnalysisProjectSnapshot {
   candidates: readonly AnalysisCandidateInput[];
   qingbiaoScenarios: readonly AnalysisQingbiaoScenarioInput[];
   dingbiaoScenarios: readonly AnalysisDingbiaoScenarioInput[];
-  qingbiaoResultsAreCurrent: boolean;
-  dingbiaoResultsAreCurrent: boolean;
+  qingbiaoState: AnalysisCalculationState;
+  dingbiaoState: AnalysisCalculationState;
+  currentQingbiaoScenarioCount: number;
+  requiredQingbiaoScenarioCount: typeof REQUIRED_QINGBIAO_SOURCE_COUNT;
+  currentDingbiaoScenarioCount: number;
+  expectedValidDingbiaoScenarioCount: number;
 }
 
 export interface AnalysisRepository {
   findProjectSnapshot(projectId: string): Promise<AnalysisProjectSnapshot | null>;
 }
 
-export const prismaAnalysisRepository: AnalysisRepository = {
-  async findProjectSnapshot(projectId) {
-    const latestDingbiaoSource = await prisma.dingbiaoScenario.findFirst({
-      where: {
-        projectId,
-        version: CURRENT_DINGBIAO_VERSION,
-        sourceQingbiaoScenarioId: { not: null },
-        sourceQingbiaoScenario: {
-          isLegacy: true,
-          exclusionRule: { ruleIndex: 1 },
-        },
-      },
-      select: { sourceQingbiaoScenarioId: true },
-      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-    });
-    const latestDingbiaoSourceId =
-      latestDingbiaoSource?.sourceQingbiaoScenarioId ?? null;
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: {
-        id: true,
-        name: true,
-        qingbiaoInputRevision: true,
-        dingbiaoInputRevision: true,
-        candidates: {
-          select: {
-            id: true,
-            companyName: true,
-            isOurCompany: true,
-          },
-          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-        },
-        qingbiaoScenarios: {
-          where: {
-            version: CURRENT_QINGBIAO_VERSION,
-            isLegacy: true,
-            exclusionRule: { ruleIndex: 1 },
-          },
-          select: {
-            qingbiaoK2: true,
-            inputRevision: true,
-            results: {
-              select: {
-                candidateId: true,
-                totalScore: true,
-                finalRank: true,
-              },
-              orderBy: [{ finalRank: "asc" }, { candidateId: "asc" }],
-            },
-          },
-          orderBy: { qingbiaoK2: "asc" },
-        },
-        dingbiaoScenarios: {
-          where: latestDingbiaoSourceId
-            ? {
-                version: CURRENT_DINGBIAO_VERSION,
-                sourceQingbiaoScenarioId: latestDingbiaoSourceId,
-              }
-            : { id: "__no_current_dingbiao_scenario__" },
-          select: {
-            finalistCount: true,
-            finalDrawIndex: true,
-            finalDrawValue: true,
-            inputRevision: true,
-            sourceQingbiaoScenario: {
-              select: { inputRevision: true },
-            },
-            results: {
-              select: {
-                candidateId: true,
-                differenceToM: true,
-                isWinner: true,
-              },
-              orderBy: [{ rank: "asc" }, { candidateId: "asc" }],
-            },
-          },
-          orderBy: [{ finalistCount: "desc" }, { finalDrawIndex: "asc" }],
-        },
-      },
-    });
+function hasCompleteQingbiaoIdentities(
+  scenarios: readonly AnalysisQingbiaoScenarioInput[],
+) {
+  if (scenarios.length !== REQUIRED_QINGBIAO_SOURCE_COUNT) {
+    return false;
+  }
+  const identities = new Set(
+    scenarios.map(
+      ({ ruleIndex, qingbiaoK2Value }) =>
+        `${ruleIndex}:${qingbiaoK2Value}`,
+    ),
+  );
+  return QINGBIAO_EXCLUSION_RULE_INDEXES.every((ruleIndex) =>
+    QINGBIAO_K2_VALUES.every((qingbiaoK2Value) =>
+      identities.has(`${ruleIndex}:${qingbiaoK2Value}`),
+    ),
+  );
+}
 
-    if (!project) {
-      return null;
-    }
+function expectedDingbiaoScenarioCount(
+  scenarios: readonly AnalysisQingbiaoScenarioInput[],
+) {
+  return scenarios.reduce(
+    (total, scenario) =>
+      total +
+      DINGBIAO_FINALIST_COUNTS.filter(
+        (finalistCount) => scenario.candidates.length >= finalistCount,
+      ).length *
+        3,
+    0,
+  );
+}
 
-    const candidates: AnalysisCandidateInput[] = project.candidates.map(
-      (candidate) => ({
-        candidateId: candidate.id,
-        companyName: candidate.companyName,
-        isOurCompany: candidate.isOurCompany,
-      }),
-    );
-    const qingbiaoScenarios: AnalysisQingbiaoScenarioInput[] =
-      project.qingbiaoScenarios.flatMap((scenario) =>
-        isQingbiaoK2(scenario.qingbiaoK2)
-          ? [
-              {
-                qingbiaoK2: scenario.qingbiaoK2,
-                candidates: scenario.results.map((result) => ({
-                  candidateId: result.candidateId,
-                  totalScore: result.totalScore.toString(),
-                  finalRank: result.finalRank,
-                })),
-              },
-            ]
-          : [],
-      );
-    const dingbiaoScenarios: AnalysisDingbiaoScenarioInput[] =
-      project.dingbiaoScenarios.flatMap((scenario) => {
-        if (
-          !isDingbiaoFinalistCount(scenario.finalistCount) ||
-          scenario.finalDrawIndex === null ||
-          !isFinalDrawSlot(scenario.finalDrawIndex)
-        ) {
-          return [];
-        }
-        const winner = scenario.results.find((result) => result.isWinner);
-        if (!winner) {
-          return [];
-        }
-
-        return [
-          {
-            finalistCount: scenario.finalistCount,
-            finalDrawSlot: scenario.finalDrawIndex,
-            finalDrawValue: scenario.finalDrawValue.toString(),
-            winnerCandidateId: winner.candidateId,
-            candidates: scenario.results.map((result) => ({
-              candidateId: result.candidateId,
-              differenceToM: result.differenceToM.toString(),
-              isWinner: result.isWinner,
-            })),
+export function createPrismaAnalysisRepository(
+  client: PrismaClient,
+): AnalysisRepository {
+  return {
+    async findProjectSnapshot(projectId) {
+      const project = await client.project.findUnique({
+        where: { id: projectId },
+        select: {
+          id: true,
+          name: true,
+          qingbiaoInputRevision: true,
+          dingbiaoInputRevision: true,
+          candidates: {
+            select: {
+              id: true,
+              companyName: true,
+              isOurCompany: true,
+            },
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
           },
-        ];
+          qingbiaoScenarios: {
+            where: {
+              version: CURRENT_QINGBIAO_VERSION,
+              exclusionRuleId: { not: null },
+              ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+            },
+            select: {
+              id: true,
+              exclusionRuleId: true,
+              qingbiaoK2: true,
+              qingbiaoK1: true,
+              qingbiaoK1Canonical: true,
+              referencePriceB: true,
+              referencePriceBCanonical: true,
+              inputRevision: true,
+              exclusionRule: {
+                select: { ruleIndex: true, label: true },
+              },
+              results: {
+                select: {
+                  candidateId: true,
+                  totalScore: true,
+                  totalScoreCanonical: true,
+                  finalRank: true,
+                },
+                orderBy: [{ finalRank: "asc" }, { candidateId: "asc" }],
+              },
+            },
+            orderBy: [
+              { exclusionRule: { ruleIndex: "asc" } },
+              { qingbiaoK2: "asc" },
+            ],
+          },
+          dingbiaoScenarios: {
+            where: {
+              version: CURRENT_DINGBIAO_VERSION,
+              sourceQingbiaoScenarioId: { not: null },
+            },
+            select: {
+              id: true,
+              sourceQingbiaoScenarioId: true,
+              finalistCount: true,
+              finalDrawIndex: true,
+              finalDrawValue: true,
+              finalDrawValueCanonical: true,
+              dingbiaoK1: true,
+              dingbiaoK1Canonical: true,
+              benchmarkPriceM: true,
+              benchmarkPriceMCanonical: true,
+              inputRevision: true,
+              ruleVersion: true,
+              updatedAt: true,
+              sourceQingbiaoScenario: {
+                select: {
+                  inputRevision: true,
+                  ruleVersion: true,
+                  exclusionRuleId: true,
+                },
+              },
+              results: {
+                select: {
+                  candidateId: true,
+                  sourceQingbiaoRank: true,
+                  differenceToM: true,
+                  differenceToMCanonical: true,
+                  rank: true,
+                  isWinner: true,
+                },
+                orderBy: [{ rank: "asc" }, { candidateId: "asc" }],
+              },
+            },
+            orderBy: [
+              { sourceQingbiaoScenarioId: "asc" },
+              { finalistCount: "desc" },
+              { finalDrawIndex: "asc" },
+            ],
+          },
+        },
       });
+      if (!project) {
+        return null;
+      }
 
-    return {
-      projectId: project.id,
-      projectName: project.name,
-      candidates,
-      qingbiaoScenarios,
-      dingbiaoScenarios,
-      qingbiaoResultsAreCurrent:
-        project.qingbiaoScenarios.length === 4 &&
-        project.qingbiaoScenarios.every(
-          (scenario) =>
-            scenario.inputRevision === project.qingbiaoInputRevision,
+      const candidates: AnalysisCandidateInput[] = project.candidates.map(
+        (candidate) => ({
+          candidateId: candidate.id,
+          companyName: candidate.companyName,
+          isOurCompany: candidate.isOurCompany,
+        }),
+      );
+      const hasStaleQingbiao = project.qingbiaoScenarios.some(
+        ({ inputRevision }) =>
+          inputRevision !== project.qingbiaoInputRevision,
+      );
+      const qingbiaoScenarios: AnalysisQingbiaoScenarioInput[] =
+        project.qingbiaoScenarios.flatMap((scenario) => {
+          if (
+            scenario.inputRevision !== project.qingbiaoInputRevision ||
+            scenario.exclusionRuleId === null ||
+            !scenario.exclusionRule ||
+            !isQingbiaoExclusionRuleIndex(
+              scenario.exclusionRule.ruleIndex,
+            ) ||
+            !isQingbiaoK2(scenario.qingbiaoK2) ||
+            scenario.results.length === 0
+          ) {
+            return [];
+          }
+          return [
+            {
+              sourceQingbiaoScenarioId: scenario.id,
+              exclusionRuleId: scenario.exclusionRuleId,
+              ruleIndex: scenario.exclusionRule.ruleIndex,
+              exclusionRuleLabel: scenario.exclusionRule.label,
+              qingbiaoK2Value: scenario.qingbiaoK2,
+              qingbiaoK1Fraction: deserializePersistedDecimal({
+                canonical: scenario.qingbiaoK1Canonical,
+                numeric: scenario.qingbiaoK1,
+              }),
+              referencePriceB: deserializePersistedDecimal({
+                canonical: scenario.referencePriceBCanonical,
+                numeric: scenario.referencePriceB,
+              }),
+              candidates: scenario.results.map((result) => ({
+                candidateId: result.candidateId,
+                totalScore: deserializePersistedDecimal({
+                  canonical: result.totalScoreCanonical,
+                  numeric: result.totalScore,
+                }),
+                finalRank: result.finalRank,
+              })),
+            },
+          ];
+        });
+      const currentSourceIds = new Set(
+        qingbiaoScenarios.map(
+          ({ sourceQingbiaoScenarioId }) => sourceQingbiaoScenarioId,
         ),
-      dingbiaoResultsAreCurrent:
-        project.dingbiaoScenarios.length > 0 &&
-        project.dingbiaoScenarios.every(
-          (scenario) =>
-            scenario.inputRevision === project.dingbiaoInputRevision &&
-            scenario.sourceQingbiaoScenario?.inputRevision ===
-              project.qingbiaoInputRevision,
-        ),
-    };
-  },
-};
+      );
+      const qingbiaoState: AnalysisCalculationState =
+        qingbiaoScenarios.length === 0
+          ? hasStaleQingbiao
+            ? "stale"
+            : "not_calculated"
+          : hasCompleteQingbiaoIdentities(qingbiaoScenarios)
+            ? "current"
+            : "incomplete";
+
+      const hasStaleDingbiao = project.dingbiaoScenarios.some(
+        (scenario) =>
+          scenario.inputRevision !== project.dingbiaoInputRevision ||
+          scenario.ruleVersion !== DINGBIAO_RULE_VERSION ||
+          scenario.sourceQingbiaoScenario?.inputRevision !==
+            project.qingbiaoInputRevision ||
+          scenario.sourceQingbiaoScenario?.ruleVersion !==
+            QINGBIAO_20260820_RULE_VERSION,
+      );
+      const dingbiaoScenarios: AnalysisDingbiaoScenarioInput[] =
+        project.dingbiaoScenarios.flatMap((scenario) => {
+          if (
+            scenario.sourceQingbiaoScenarioId === null ||
+            !currentSourceIds.has(scenario.sourceQingbiaoScenarioId) ||
+            scenario.inputRevision !== project.dingbiaoInputRevision ||
+            scenario.ruleVersion !== DINGBIAO_RULE_VERSION ||
+            scenario.sourceQingbiaoScenario?.inputRevision !==
+              project.qingbiaoInputRevision ||
+            scenario.sourceQingbiaoScenario.ruleVersion !==
+              QINGBIAO_20260820_RULE_VERSION ||
+            scenario.sourceQingbiaoScenario.exclusionRuleId === null ||
+            !isDingbiaoFinalistCount(scenario.finalistCount) ||
+            scenario.finalDrawIndex === null ||
+            !isFinalDrawIndex(scenario.finalDrawIndex) ||
+            scenario.results.length !== scenario.finalistCount ||
+            scenario.results.some(
+              ({ sourceQingbiaoRank }) => sourceQingbiaoRank === null,
+            )
+          ) {
+            return [];
+          }
+          const winners = scenario.results.filter(({ isWinner }) => isWinner);
+          const winner = winners[0];
+          if (!winner || winners.length !== 1) {
+            return [];
+          }
+          const scenarioCandidates = scenario.results.flatMap((result) =>
+            result.sourceQingbiaoRank === null
+              ? []
+              : [
+                  {
+                    candidateId: result.candidateId,
+                    sourceQingbiaoRank: result.sourceQingbiaoRank,
+                    differenceToM: deserializePersistedDecimal({
+                      canonical: result.differenceToMCanonical,
+                      numeric: result.differenceToM,
+                    }),
+                    rank: result.rank,
+                    isWinner: result.isWinner,
+                  },
+                ],
+          );
+          return [
+            {
+              scenarioId: scenario.id,
+              sourceQingbiaoScenarioId: scenario.sourceQingbiaoScenarioId,
+              finalistCount: scenario.finalistCount,
+              finalDrawIndex: scenario.finalDrawIndex,
+              finalDrawValueFraction: deserializePersistedDecimal({
+                canonical: scenario.finalDrawValueCanonical,
+                numeric: scenario.finalDrawValue,
+              }),
+              dingbiaoK1Fraction: deserializePersistedDecimal({
+                canonical: scenario.dingbiaoK1Canonical,
+                numeric: scenario.dingbiaoK1,
+              }),
+              benchmarkPriceM: deserializePersistedDecimal({
+                canonical: scenario.benchmarkPriceMCanonical,
+                numeric: scenario.benchmarkPriceM,
+              }),
+              winnerCandidateId: winner.candidateId,
+              calculatedAt: scenario.updatedAt.toISOString(),
+              candidates: scenarioCandidates,
+            },
+          ];
+        });
+      const expectedValidDingbiaoScenarioCount =
+        expectedDingbiaoScenarioCount(qingbiaoScenarios);
+      const hasOneCalculationTimestamp =
+        dingbiaoScenarios.length > 0 &&
+        new Set(dingbiaoScenarios.map(({ calculatedAt }) => calculatedAt))
+          .size === 1;
+      const dingbiaoState: AnalysisCalculationState =
+        qingbiaoState === "stale"
+          ? "stale"
+          : dingbiaoScenarios.length === 0
+            ? hasStaleDingbiao
+              ? "stale"
+              : "not_calculated"
+            : qingbiaoState === "current" &&
+                dingbiaoScenarios.length ===
+                  expectedValidDingbiaoScenarioCount &&
+                hasOneCalculationTimestamp
+              ? "current"
+              : "incomplete";
+
+      return {
+        projectId: project.id,
+        projectName: project.name,
+        candidates,
+        qingbiaoScenarios,
+        dingbiaoScenarios,
+        qingbiaoState,
+        dingbiaoState,
+        currentQingbiaoScenarioCount: qingbiaoScenarios.length,
+        requiredQingbiaoScenarioCount: REQUIRED_QINGBIAO_SOURCE_COUNT,
+        currentDingbiaoScenarioCount: dingbiaoScenarios.length,
+        expectedValidDingbiaoScenarioCount,
+      };
+    },
+  };
+}
+
+export const prismaAnalysisRepository =
+  createPrismaAnalysisRepository(prisma);

@@ -1,274 +1,468 @@
 import Decimal from "decimal.js";
 
-import {
-  calculateSimulationWinRate,
-  DINGBIAO_FINALIST_COUNTS,
-  DINGBIAO_SIMULATION_COUNT,
-} from "@/domain/dingbiao";
-import { QINGBIAO_K2_VALUES } from "@/domain/qingbiao";
 import type {
-  AnalysisDingbiaoScenarioInput,
-  AnalysisSimulationWinRate,
+  AnalysisCandidateInput,
+  AnalysisDimensionItem,
+  AnalysisQingbiaoScenarioInput,
+  AnalysisWinMetric,
   CompetitorWinStatistic,
   DecisionAnalysisInput,
   DecisionAnalysisResult,
-  DingbiaoCompetitivenessItem,
-  QingbiaoCompetitivenessItem,
+  QingbiaoRankStatistics,
+  QingbiaoLeaderStatistic,
+  QingbiaoSourceAnalysis,
+  ScenarioAnalysisRecord,
 } from "@/domain/analysis/types";
-import { fractionToPercentagePoints } from "@/lib/percentage";
+import { DINGBIAO_FINALIST_COUNTS } from "@/domain/dingbiao";
+import {
+  QINGBIAO_EXCLUSION_RULE_INDEXES,
+  QINGBIAO_K2_VALUES,
+} from "@/domain/qingbiao";
+
+const THEORETICAL_QINGBIAO_SOURCE_COUNT = 16 as const;
+const THEORETICAL_DINGBIAO_SCENARIO_COUNT = 144 as const;
+const FINAL_DRAW_INDEXES = [1, 2, 3] as const;
 
 function compareCandidateIds(left: string, right: string) {
-  if (left === right) {
-    return 0;
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
+function fraction(numerator: number, denominator: number) {
+  return denominator === 0
+    ? "0"
+    : new Decimal(numerator).dividedBy(denominator).toString();
+}
+
+function winMetric(
+  records: readonly ScenarioAnalysisRecord[],
+  ourCompany: AnalysisCandidateInput | null,
+): AnalysisWinMetric {
+  const validRecords = records.filter(({ isValid }) => isValid);
+  if (!ourCompany) {
+    return {
+      validScenarioCount: validRecords.length,
+      ourWinCount: null,
+      simulationWinRate: null,
+    };
   }
-  return left < right ? -1 : 1;
+  const ourWinCount = validRecords.filter(
+    ({ winnerCandidateId }) => winnerCandidateId === ourCompany.candidateId,
+  ).length;
+  return {
+    validScenarioCount: validRecords.length,
+    ourWinCount,
+    simulationWinRate: fraction(ourWinCount, validRecords.length),
+  };
 }
 
-function buildQingbiaoCompetitiveness(
-  input: DecisionAnalysisInput,
-  ourCompanyCandidateId: string,
-) {
-  const scenariosByQingbiaoK2 = new Map(
-    input.qingbiaoScenarios.map((scenario) => [scenario.qingbiaoK2, scenario]),
-  );
-  const items: QingbiaoCompetitivenessItem[] = [];
-
-  for (const qingbiaoK2 of QINGBIAO_K2_VALUES) {
-    const scenario = scenariosByQingbiaoK2.get(qingbiaoK2);
-    const ourResult = scenario?.candidates.find(
-      (candidate) => candidate.candidateId === ourCompanyCandidateId,
-    );
-    const leaderResult = scenario?.candidates.find(
-      (candidate) => candidate.finalRank === 1,
-    );
-    if (!scenario || !ourResult || !leaderResult) {
-      return null;
-    }
-
-    items.push({
-      qingbiaoK2,
-      ourRank: ourResult.finalRank,
-      isTop5: ourResult.finalRank <= 5,
-      ourTotalScore: new Decimal(ourResult.totalScore).toString(),
-      leaderTotalScore: new Decimal(leaderResult.totalScore).toString(),
-      scoreGapToLeader: new Decimal(leaderResult.totalScore)
-        .minus(ourResult.totalScore)
-        .toString(),
-    });
+function rankStatistics(ranks: readonly number[]): QingbiaoRankStatistics {
+  if (ranks.length === 0) {
+    return {
+      participatingSourceCount: 0,
+      bestRank: null,
+      worstRank: null,
+      averageRank: null,
+    };
   }
-
-  return items;
+  return {
+    participatingSourceCount: ranks.length,
+    bestRank: Math.min(...ranks),
+    worstRank: Math.max(...ranks),
+    averageRank: new Decimal(ranks.reduce((total, rank) => total + rank, 0))
+      .dividedBy(ranks.length)
+      .toString(),
+  };
 }
 
-function isCompleteSimulationGroup(
-  scenarios: readonly AnalysisDingbiaoScenarioInput[],
-) {
-  return (
-    scenarios.length === DINGBIAO_SIMULATION_COUNT &&
-    new Set(scenarios.map((scenario) => scenario.finalDrawSlot)).size ===
-      DINGBIAO_SIMULATION_COUNT
-  );
-}
-
-function buildSimulationWinRates(
-  scenarios: readonly AnalysisDingbiaoScenarioInput[],
-  ourCompanyCandidateId: string,
-) {
-  return DINGBIAO_FINALIST_COUNTS.map(
-    (finalistCount): AnalysisSimulationWinRate => {
-      const group = scenarios.filter(
-        (scenario) => scenario.finalistCount === finalistCount,
-      );
-      if (!isCompleteSimulationGroup(group)) {
-        return {
-          status: "unavailable",
-          finalistCount,
-          validScenarioCount: group.length,
-        };
-      }
-
-      const result = calculateSimulationWinRate(
-        ourCompanyCandidateId,
-        group.map((scenario) => scenario.winnerCandidateId),
-      );
-      return {
-        status: "available",
-        finalistCount,
-        winCount: result.winCount,
-        simulationCount: result.simulationCount,
-        simulationWinRate: result.simulationWinRate,
-      };
-    },
-  );
-}
-
-function buildDingbiaoCompetitiveness(
+function buildScenarioRecords(
   input: DecisionAnalysisInput,
-  ourCompanyCandidateId: string,
+  ourCompany: AnalysisCandidateInput | null,
 ) {
   const candidatesById = new Map(
     input.candidates.map((candidate) => [candidate.candidateId, candidate]),
   );
+  const qingbiaoById = new Map(
+    input.qingbiaoScenarios.map((scenario) => [
+      scenario.sourceQingbiaoScenarioId,
+      scenario,
+    ]),
+  );
 
   return input.dingbiaoScenarios
-    .flatMap((scenario): DingbiaoCompetitivenessItem[] => {
+    .flatMap((scenario): ScenarioAnalysisRecord[] => {
+      const source = qingbiaoById.get(scenario.sourceQingbiaoScenarioId);
       const winner = candidatesById.get(scenario.winnerCandidateId);
-      const ourResult = scenario.candidates.find(
-        (candidate) => candidate.candidateId === ourCompanyCandidateId,
+      const winnerResult = scenario.candidates.find(
+        ({ candidateId }) => candidateId === scenario.winnerCandidateId,
       );
-      if (!winner) {
+      if (!source || !winner || !winnerResult) {
         return [];
       }
-
+      const ourQingbiaoResult = ourCompany
+        ? source.candidates.find(
+            ({ candidateId }) => candidateId === ourCompany.candidateId,
+          )
+        : undefined;
+      const ourDingbiaoResult = ourCompany
+        ? scenario.candidates.find(
+            ({ candidateId }) => candidateId === ourCompany.candidateId,
+          )
+        : undefined;
       return [
         {
+          projectId: input.projectId,
+          dingbiaoScenarioId: scenario.scenarioId,
+          sourceQingbiaoScenarioId: source.sourceQingbiaoScenarioId,
+          exclusionRuleId: source.exclusionRuleId,
+          ruleIndex: source.ruleIndex,
+          exclusionRuleLabel: source.exclusionRuleLabel,
+          qingbiaoK2Value: source.qingbiaoK2Value,
           finalistCount: scenario.finalistCount,
-          finalDrawSlot: scenario.finalDrawSlot,
-          finalDrawValue: new Decimal(scenario.finalDrawValue).toString(),
+          finalDrawIndex: scenario.finalDrawIndex,
+          finalDrawValueFraction: new Decimal(
+            scenario.finalDrawValueFraction,
+          ).toString(),
           winnerCandidateId: winner.candidateId,
           winnerCompanyName: winner.companyName,
-          ourDifferenceToM: ourResult
-            ? new Decimal(ourResult.differenceToM).toString()
+          winnerIsOurCompany: winner.isOurCompany,
+          winnerSourceQingbiaoRank: winnerResult.sourceQingbiaoRank,
+          winnerDingbiaoRank: winnerResult.rank,
+          ourCompanyCandidateId: ourCompany?.candidateId ?? null,
+          ourCompanyQingbiaoRank: ourQingbiaoResult?.finalRank ?? null,
+          ourCompanyDingbiaoRank: ourDingbiaoResult?.rank ?? null,
+          ourCompanyDifferenceToM: ourDingbiaoResult
+            ? new Decimal(ourDingbiaoResult.differenceToM).toString()
             : null,
-          isOurWinner: scenario.winnerCandidateId === ourCompanyCandidateId,
+          benchmarkPriceM: new Decimal(scenario.benchmarkPriceM).toString(),
+          dingbiaoK1Fraction: new Decimal(
+            scenario.dingbiaoK1Fraction,
+          ).toString(),
+          calculatedAt: scenario.calculatedAt,
+          isValid:
+            winnerResult.isWinner &&
+            scenario.candidates.filter(({ isWinner }) => isWinner).length ===
+              1,
         },
       ];
     })
-    .toSorted((left, right) => {
-      if (left.finalistCount !== right.finalistCount) {
-        return right.finalistCount - left.finalistCount;
-      }
-      return left.finalDrawSlot - right.finalDrawSlot;
-    });
-}
-
-function buildCompetitorStatistics(
-  input: DecisionAnalysisInput,
-  validScenarios: readonly DingbiaoCompetitivenessItem[],
-) {
-  const winCounts = new Map<string, number>();
-  for (const scenario of validScenarios) {
-    winCounts.set(
-      scenario.winnerCandidateId,
-      (winCounts.get(scenario.winnerCandidateId) ?? 0) + 1,
+    .toSorted(
+      (left, right) =>
+        left.ruleIndex - right.ruleIndex ||
+        left.qingbiaoK2Value - right.qingbiaoK2Value ||
+        right.finalistCount - left.finalistCount ||
+        left.finalDrawIndex - right.finalDrawIndex,
     );
-  }
-
-  return input.candidates
-    .map(
-      (candidate): CompetitorWinStatistic => ({
-        candidateId: candidate.candidateId,
-        companyName: candidate.companyName,
-        winnerCount: winCounts.get(candidate.candidateId) ?? 0,
-        isOurCompany: candidate.isOurCompany,
-      }),
-    )
-    .toSorted((left, right) => {
-      if (left.winnerCount !== right.winnerCount) {
-        return right.winnerCount - left.winnerCount;
-      }
-      return compareCandidateIds(left.candidateId, right.candidateId);
-    });
 }
 
-function findBestDingbiaoScenario(
-  simulationWinRates: readonly AnalysisSimulationWinRate[],
+function sourceRanks(
+  sources: readonly AnalysisQingbiaoScenarioInput[],
+  ourCompany: AnalysisCandidateInput | null,
 ) {
+  return ourCompany
+    ? sources.flatMap((source) => {
+        const candidate = source.candidates.find(
+          ({ candidateId }) => candidateId === ourCompany.candidateId,
+        );
+        return candidate ? [candidate.finalRank] : [];
+      })
+    : [];
+}
+
+function buildDimensionItem(
+  key: string,
+  label: string,
+  records: readonly ScenarioAnalysisRecord[],
+  ourCompany: AnalysisCandidateInput | null,
+  ranks: readonly number[] | null,
+): AnalysisDimensionItem {
+  return {
+    key,
+    label,
+    ...winMetric(records, ourCompany),
+    qingbiaoRankStatistics: ranks ? rankStatistics(ranks) : null,
+  };
+}
+
+function buildSourceAnalysis(
+  input: DecisionAnalysisInput,
+  records: readonly ScenarioAnalysisRecord[],
+  ourCompany: AnalysisCandidateInput | null,
+) {
+  const candidatesById = new Map(
+    input.candidates.map((candidate) => [candidate.candidateId, candidate]),
+  );
+  return input.qingbiaoScenarios
+    .map((source): QingbiaoSourceAnalysis => {
+      const sourceRecords = records.filter(
+        ({ sourceQingbiaoScenarioId }) =>
+          sourceQingbiaoScenarioId === source.sourceQingbiaoScenarioId,
+      );
+      const ourQingbiaoRank = ourCompany
+        ? (source.candidates.find(
+            ({ candidateId }) => candidateId === ourCompany.candidateId,
+          )?.finalRank ?? null)
+        : null;
+      return {
+        sourceQingbiaoScenarioId: source.sourceQingbiaoScenarioId,
+        exclusionRuleId: source.exclusionRuleId,
+        ruleIndex: source.ruleIndex,
+        exclusionRuleLabel: source.exclusionRuleLabel,
+        qingbiaoK2Value: source.qingbiaoK2Value,
+        top5: source.candidates
+          .filter(({ finalRank }) => finalRank <= 5)
+          .toSorted((left, right) => left.finalRank - right.finalRank)
+          .map((candidate) => ({
+            candidateId: candidate.candidateId,
+            companyName:
+              candidatesById.get(candidate.candidateId)?.companyName ??
+              candidate.candidateId,
+            finalRank: candidate.finalRank,
+          })),
+        ourQingbiaoRank,
+        ...winMetric(sourceRecords, ourCompany),
+        finalistBreakdowns: DINGBIAO_FINALIST_COUNTS.map((finalistCount) => ({
+          finalistCount,
+          ...winMetric(
+            sourceRecords.filter(
+              (record) => record.finalistCount === finalistCount,
+            ),
+            ourCompany,
+          ),
+        })),
+      };
+    })
+    .toSorted(
+      (left, right) =>
+        left.ruleIndex - right.ruleIndex ||
+        left.qingbiaoK2Value - right.qingbiaoK2Value,
+    );
+}
+
+function sourceRate(source: QingbiaoSourceAnalysis) {
+  return fraction(source.ourWinCount ?? 0, source.validScenarioCount);
+}
+
+function compareBestSources(
+  left: QingbiaoSourceAnalysis,
+  right: QingbiaoSourceAnalysis,
+) {
+  const rateComparison = new Decimal(sourceRate(right)).comparedTo(
+    sourceRate(left),
+  );
   return (
-    simulationWinRates
-      .filter(
-        (item): item is Extract<
-          AnalysisSimulationWinRate,
-          { status: "available" }
-        > => item.status === "available",
-      )
-      .toSorted((left, right) => {
-        const rateComparison = new Decimal(
-          right.simulationWinRate,
-        ).comparedTo(left.simulationWinRate);
-        if (rateComparison !== 0) {
-          return rateComparison;
-        }
-        return right.finalistCount - left.finalistCount;
-      })[0] ?? null
+    rateComparison ||
+    (left.ourQingbiaoRank ?? Number.MAX_SAFE_INTEGER) -
+      (right.ourQingbiaoRank ?? Number.MAX_SAFE_INTEGER) ||
+    left.ruleIndex - right.ruleIndex ||
+    left.qingbiaoK2Value - right.qingbiaoK2Value
   );
 }
 
-function formatSummaryPercentage(value: string) {
-  return new Decimal(fractionToPercentagePoints(value))
-    .toDecimalPlaces(2)
-    .toString();
+function compareWorstSources(
+  left: QingbiaoSourceAnalysis,
+  right: QingbiaoSourceAnalysis,
+) {
+  const rateComparison = new Decimal(sourceRate(left)).comparedTo(
+    sourceRate(right),
+  );
+  const leftRank = left.ourQingbiaoRank ?? Number.MAX_SAFE_INTEGER;
+  const rightRank = right.ourQingbiaoRank ?? Number.MAX_SAFE_INTEGER;
+  return (
+    rateComparison ||
+    (leftRank === rightRank ? 0 : rightRank - leftRank) ||
+    left.ruleIndex - right.ruleIndex ||
+    left.qingbiaoK2Value - right.qingbiaoK2Value
+  );
+}
+
+function buildCompetitorStatistics(
+  candidates: readonly AnalysisCandidateInput[],
+  records: readonly ScenarioAnalysisRecord[],
+) {
+  const validRecords = records.filter(({ isValid }) => isValid);
+  const counts = new Map<string, number>();
+  for (const record of validRecords) {
+    counts.set(
+      record.winnerCandidateId,
+      (counts.get(record.winnerCandidateId) ?? 0) + 1,
+    );
+  }
+  return candidates
+    .map(
+      (candidate): CompetitorWinStatistic => ({
+        ...candidate,
+        winnerCount: counts.get(candidate.candidateId) ?? 0,
+        validScenarioCount: validRecords.length,
+        winShare: fraction(
+          counts.get(candidate.candidateId) ?? 0,
+          validRecords.length,
+        ),
+      }),
+    )
+    .toSorted(
+      (left, right) =>
+        right.winnerCount - left.winnerCount ||
+        compareCandidateIds(left.candidateId, right.candidateId),
+    );
+}
+
+function buildQingbiaoLeaderStatistics(
+  candidates: readonly AnalysisCandidateInput[],
+  sources: readonly AnalysisQingbiaoScenarioInput[],
+) {
+  const counts = new Map<string, number>();
+  for (const source of sources) {
+    const leader = source.candidates.find(({ finalRank }) => finalRank === 1);
+    if (leader) {
+      counts.set(
+        leader.candidateId,
+        (counts.get(leader.candidateId) ?? 0) + 1,
+      );
+    }
+  }
+  return candidates
+    .map(
+      (candidate): QingbiaoLeaderStatistic => ({
+        ...candidate,
+        top1Count: counts.get(candidate.candidateId) ?? 0,
+        participatingSourceCount: sources.length,
+        top1Share: fraction(
+          counts.get(candidate.candidateId) ?? 0,
+          sources.length,
+        ),
+      }),
+    )
+    .toSorted(
+      (left, right) =>
+        right.top1Count - left.top1Count ||
+        compareCandidateIds(left.candidateId, right.candidateId),
+    );
 }
 
 export function buildDecisionAnalysis(
   input: DecisionAnalysisInput,
 ): DecisionAnalysisResult {
-  const ourCompany = input.candidates.find((candidate) => candidate.isOurCompany);
-  if (!ourCompany) {
-    return { status: "missing_our_company" };
-  }
-
-  const qingbiaoCompetitiveness = buildQingbiaoCompetitiveness(
-    input,
-    ourCompany.candidateId,
-  );
-  if (!qingbiaoCompetitiveness) {
+  if (input.qingbiaoScenarios.length === 0) {
     return { status: "missing_qingbiao_results" };
   }
+  const ourCompany =
+    input.candidates.find(({ isOurCompany }) => isOurCompany) ?? null;
+  const scenarioRecords = buildScenarioRecords(input, ourCompany);
+  const validRecords = scenarioRecords.filter(({ isValid }) => isValid);
+  const sourceAnalysis = buildSourceAnalysis(input, scenarioRecords, ourCompany);
+  const allRanks = sourceRanks(input.qingbiaoScenarios, ourCompany);
+  const qingbiaoRankStatistics = ourCompany
+    ? rankStatistics(allRanks)
+    : null;
+  const qingbiaoStability = ourCompany
+    ? ([1, 3, 4, 5] as const).map((threshold) => {
+        const sourceCount = allRanks.filter((rank) => rank <= threshold).length;
+        return {
+          threshold,
+          sourceCount,
+          participatingSourceCount: input.qingbiaoScenarios.length,
+          share: fraction(sourceCount, input.qingbiaoScenarios.length),
+        };
+      })
+    : [];
 
-  const bestQingbiaoScenario = qingbiaoCompetitiveness.toSorted((left, right) => {
-    if (left.ourRank !== right.ourRank) {
-      return left.ourRank - right.ourRank;
-    }
-    return left.qingbiaoK2 - right.qingbiaoK2;
-  })[0];
-  if (!bestQingbiaoScenario) {
-    return { status: "missing_qingbiao_results" };
-  }
-
-  const simulationWinRates = buildSimulationWinRates(
-    input.dingbiaoScenarios,
-    ourCompany.candidateId,
+  const byExclusionRule = QINGBIAO_EXCLUSION_RULE_INDEXES.map((ruleIndex) => {
+    const ruleSources = input.qingbiaoScenarios.filter(
+      (source) => source.ruleIndex === ruleIndex,
+    );
+    return buildDimensionItem(
+      `rule-${ruleIndex}`,
+      `推优规则 ${ruleIndex}`,
+      scenarioRecords.filter((record) => record.ruleIndex === ruleIndex),
+      ourCompany,
+      ourCompany ? sourceRanks(ruleSources, ourCompany) : null,
+    );
+  });
+  const byQingbiaoK2 = QINGBIAO_K2_VALUES.map((qingbiaoK2Value) =>
+    buildDimensionItem(
+      `k2-${qingbiaoK2Value}`,
+      `K2=${qingbiaoK2Value}%`,
+      scenarioRecords.filter(
+        (record) => record.qingbiaoK2Value === qingbiaoK2Value,
+      ),
+      ourCompany,
+      null,
+    ),
   );
-  const dingbiaoCompetitiveness = buildDingbiaoCompetitiveness(
-    input,
-    ourCompany.candidateId,
+  const byFinalistCount = DINGBIAO_FINALIST_COUNTS.map((finalistCount) =>
+    buildDimensionItem(
+      `n-${finalistCount}`,
+      `N=${finalistCount}`,
+      scenarioRecords.filter(
+        (record) => record.finalistCount === finalistCount,
+      ),
+      ourCompany,
+      null,
+    ),
+  );
+  const byFinalDrawIndex = FINAL_DRAW_INDEXES.map((finalDrawIndex) =>
+    buildDimensionItem(
+      `draw-${finalDrawIndex}`,
+      `抽值 ${finalDrawIndex}`,
+      scenarioRecords.filter(
+        (record) => record.finalDrawIndex === finalDrawIndex,
+      ),
+      ourCompany,
+      null,
+    ),
   );
   const competitorStatistics = buildCompetitorStatistics(
-    input,
-    dingbiaoCompetitiveness,
+    input.candidates,
+    scenarioRecords,
   );
-  const majorCompetitor =
-    competitorStatistics.find(
-      (candidate) => !candidate.isOurCompany && candidate.winnerCount > 0,
-    ) ?? null;
-  const bestDingbiaoScenario = findBestDingbiaoScenario(simulationWinRates);
-  const qingbiaoTop5ScenarioCount = qingbiaoCompetitiveness.filter(
-    (scenario) => scenario.isTop5,
-  ).length;
-
-  const summaries = [
-    `在${QINGBIAO_K2_VALUES.length}种清标场景中，我方有${qingbiaoTop5ScenarioCount}种进入前5，最佳排名为第${bestQingbiaoScenario.ourRank}名。`,
-    bestDingbiaoScenario?.status === "available"
-      ? `在当前定标测算中，N=${bestDingbiaoScenario.finalistCount}情况下我方模拟中标率最高，为${formatSummaryPercentage(bestDingbiaoScenario.simulationWinRate)}%。`
-      : "当前尚无完整的定标测算结果，暂不能比较各入围数量下的模拟中标率。",
-  ];
+  const qingbiaoLeaderStatistics = buildQingbiaoLeaderStatistics(
+    input.candidates,
+    input.qingbiaoScenarios,
+  );
+  const primaryCompetitors = ourCompany
+    ? competitorStatistics
+        .filter(({ isOurCompany }) => !isOurCompany)
+        .slice(0, 3)
+    : [];
+  const comparableSources = ourCompany
+    ? sourceAnalysis.filter(({ validScenarioCount }) => validScenarioCount > 0)
+    : [];
+  const bestSource = comparableSources.toSorted(compareBestSources)[0] ?? null;
+  const worstSource = comparableSources.toSorted(compareWorstSources)[0] ?? null;
+  const globalWinMetric = winMetric(scenarioRecords, ourCompany);
 
   return {
     status: "ready",
     analysis: {
       ourCompany,
       candidateCount: input.candidates.length,
-      qingbiaoTop5ScenarioCount,
-      bestQingbiaoRank: bestQingbiaoScenario.ourRank,
-      qingbiaoCompetitiveness,
-      simulationWinRates,
-      dingbiaoCompetitiveness,
+      theoreticalQingbiaoSourceCount: THEORETICAL_QINGBIAO_SOURCE_COUNT,
+      participatingQingbiaoSourceCount: input.qingbiaoScenarios.length,
+      theoreticalScenarioCount: THEORETICAL_DINGBIAO_SCENARIO_COUNT,
+      validScenarioCount: validRecords.length,
+      globalWinMetric,
+      qingbiaoRankStatistics,
+      qingbiaoStability,
+      scenarioRecords,
+      sourceAnalysis,
+      byExclusionRule,
+      byQingbiaoK2,
+      byFinalistCount,
+      byFinalDrawIndex,
       competitorStatistics,
-      majorCompetitor,
-      bestQingbiaoScenario,
-      bestDingbiaoScenario,
-      summaries,
+      qingbiaoLeaderStatistics,
+      primaryCompetitors,
+      bestSource,
+      worstSource,
+      summaries: ourCompany
+        ? [
+            `我方在 ${globalWinMetric.validScenarioCount} 个有效定标场景中胜出 ${globalWinMetric.ourWinCount ?? 0} 次。`,
+            `当前共有 ${input.qingbiaoScenarios.length}/16 套清标来源，已保存 ${validRecords.length}/144 个有效定标场景。`,
+          ]
+        : [
+            "项目未设置我方单位；胜出单位分布与竞争对手统计仍按全部有效场景展示。",
+            `当前共有 ${input.qingbiaoScenarios.length}/16 套清标来源，已保存 ${validRecords.length}/144 个有效定标场景。`,
+          ],
     },
   };
 }

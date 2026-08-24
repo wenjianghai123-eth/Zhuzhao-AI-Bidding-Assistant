@@ -15,6 +15,10 @@ import {
   type QingbiaoK2Value,
 } from "@/domain/qingbiao";
 import type { PrismaClient } from "@/generated/prisma/client";
+import {
+  deserializePersistedDecimal,
+  serializeDecimalForPersistence,
+} from "@/server/db/decimal-persistence";
 import { prisma } from "@/server/db/prisma";
 
 const CURRENT_DINGBIAO_VERSION = 1;
@@ -54,6 +58,7 @@ export interface SaveDingbiaoCalculationInput {
   expectedProjectInputRevision: number;
   expectedQingbiaoInputRevision: number;
   ruleVersion: typeof DINGBIAO_RULE_VERSION;
+  calculatedAt?: string;
   scenarios: readonly DingbiaoSimulationScenarioResult[];
 }
 
@@ -64,8 +69,26 @@ export type SaveDingbiaoCalculationResult =
   | { status: "qingbiao_revision_conflict" }
   | { status: "invalid_scenario_batch" };
 
+export interface ClearDingbiaoCalculationsInput {
+  projectId: string;
+  sourceQingbiaoScenarioIds: readonly string[];
+  expectedProjectInputRevision: number;
+  expectedQingbiaoInputRevision: number;
+}
+
+export type ClearDingbiaoCalculationsResult =
+  | { status: "cleared"; deletedScenarioCount: number }
+  | { status: "project_not_found" }
+  | { status: "input_revision_conflict" }
+  | { status: "qingbiao_revision_conflict" }
+  | { status: "invalid_source_set" };
+
 export interface DingbiaoRepository {
   findProject(projectId: string): Promise<DingbiaoProjectSnapshot | null>;
+  countCurrentQingbiaoSources(
+    projectId: string,
+    expectedQingbiaoInputRevision: number,
+  ): Promise<number>;
   findSavedCalculation(
     projectId: string,
   ): Promise<SavedDingbiaoCalculationSnapshot | null>;
@@ -75,6 +98,9 @@ export interface DingbiaoRepository {
   saveCalculation(
     input: SaveDingbiaoCalculationInput,
   ): Promise<SaveDingbiaoCalculationResult>;
+  clearCalculationsForSources(
+    input: ClearDingbiaoCalculationsInput,
+  ): Promise<ClearDingbiaoCalculationsResult>;
 }
 
 function decimalsEqual(left: string, right: string) {
@@ -219,8 +245,11 @@ async function readSavedCalculationBySourceScenario(
       finalistCount: true,
       finalDrawIndex: true,
       finalDrawValue: true,
+      finalDrawValueCanonical: true,
       dingbiaoK1: true,
+      dingbiaoK1Canonical: true,
       benchmarkPriceM: true,
+      benchmarkPriceMCanonical: true,
       inputRevision: true,
       ruleVersion: true,
       updatedAt: true,
@@ -229,8 +258,11 @@ async function readSavedCalculationBySourceScenario(
           candidateId: true,
           sourceQingbiaoRank: true,
           bidPrice: true,
+          bidPriceCanonical: true,
           netDiscountRateSnapshot: true,
+          netDiscountRateSnapshotCanonical: true,
           differenceToM: true,
+          differenceToMCanonical: true,
           rank: true,
           isWinner: true,
           candidate: { select: { isOurCompany: true } },
@@ -296,12 +328,20 @@ async function readSavedCalculationBySourceScenario(
         ? [
             {
               candidateId: result.candidateId,
-              bidPrice: result.bidPrice.toString(),
-              netDiscountRateFraction:
-                result.netDiscountRateSnapshot.toString(),
+              bidPrice: deserializePersistedDecimal({
+                canonical: result.bidPriceCanonical,
+                numeric: result.bidPrice,
+              }),
+              netDiscountRateFraction: deserializePersistedDecimal({
+                canonical: result.netDiscountRateSnapshotCanonical,
+                numeric: result.netDiscountRateSnapshot,
+              }),
               sourceQingbiaoRank: result.sourceQingbiaoRank,
               isOurCompany: result.candidate.isOurCompany,
-              differenceToM: result.differenceToM.toString(),
+              differenceToM: deserializePersistedDecimal({
+                canonical: result.differenceToMCanonical,
+                numeric: result.differenceToM,
+              }),
               rank: result.rank,
               isWinner: result.isWinner,
             },
@@ -311,9 +351,18 @@ async function readSavedCalculationBySourceScenario(
     scenarios.push({
       finalistCount: record.finalistCount,
       finalDrawIndex: record.finalDrawIndex,
-      finalDrawValueFraction: record.finalDrawValue.toString(),
-      dingbiaoK1Fraction: record.dingbiaoK1.toString(),
-      benchmarkPriceM: record.benchmarkPriceM.toString(),
+      finalDrawValueFraction: deserializePersistedDecimal({
+        canonical: record.finalDrawValueCanonical,
+        numeric: record.finalDrawValue,
+      }),
+      dingbiaoK1Fraction: deserializePersistedDecimal({
+        canonical: record.dingbiaoK1Canonical,
+        numeric: record.dingbiaoK1,
+      }),
+      benchmarkPriceM: deserializePersistedDecimal({
+        canonical: record.benchmarkPriceMCanonical,
+        numeric: record.benchmarkPriceM,
+      }),
       winnerCandidateId: winner.candidateId,
       candidates,
     });
@@ -392,6 +441,22 @@ export function createPrismaDingbiaoRepository(
       };
     },
 
+    countCurrentQingbiaoSources(
+      projectId,
+      expectedQingbiaoInputRevision,
+    ) {
+      return client.qingbiaoScenario.count({
+        where: {
+          projectId,
+          version: CURRENT_QINGBIAO_VERSION,
+          inputRevision: expectedQingbiaoInputRevision,
+          ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+          exclusionRuleId: { not: null },
+          results: { some: {} },
+        },
+      });
+    },
+
     async findSavedCalculation(projectId) {
       const latest = await client.dingbiaoScenario.findFirst({
         where: {
@@ -418,8 +483,72 @@ export function createPrismaDingbiaoRepository(
       );
     },
 
+    async clearCalculationsForSources(input) {
+      return client.$transaction(async (transaction) => {
+        const project = await transaction.project.findUnique({
+          where: { id: input.projectId },
+          select: {
+            dingbiaoInputRevision: true,
+            qingbiaoInputRevision: true,
+          },
+        });
+        if (!project) {
+          return { status: "project_not_found" };
+        }
+        if (
+          project.dingbiaoInputRevision !== input.expectedProjectInputRevision
+        ) {
+          return { status: "input_revision_conflict" };
+        }
+        if (
+          project.qingbiaoInputRevision !==
+          input.expectedQingbiaoInputRevision
+        ) {
+          return { status: "qingbiao_revision_conflict" };
+        }
+
+        const uniqueSourceIds = [...new Set(input.sourceQingbiaoScenarioIds)];
+        if (
+          uniqueSourceIds.length === 0 ||
+          uniqueSourceIds.length !== input.sourceQingbiaoScenarioIds.length
+        ) {
+          return { status: "invalid_source_set" };
+        }
+        const validSourceCount = await transaction.qingbiaoScenario.count({
+          where: {
+            id: { in: uniqueSourceIds },
+            projectId: input.projectId,
+            version: CURRENT_QINGBIAO_VERSION,
+            inputRevision: input.expectedQingbiaoInputRevision,
+            ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+            exclusionRuleId: { not: null },
+          },
+        });
+        if (validSourceCount !== uniqueSourceIds.length) {
+          return { status: "invalid_source_set" };
+        }
+
+        const deleted = await transaction.dingbiaoScenario.deleteMany({
+          where: {
+            projectId: input.projectId,
+            sourceQingbiaoScenarioId: { in: uniqueSourceIds },
+          },
+        });
+        return {
+          status: "cleared",
+          deletedScenarioCount: deleted.count,
+        };
+      });
+    },
+
     async saveCalculation(input) {
       return client.$transaction(async (transaction) => {
+        const calculatedAt = input.calculatedAt
+          ? new Date(input.calculatedAt)
+          : null;
+        if (calculatedAt && Number.isNaN(calculatedAt.getTime())) {
+          return { status: "invalid_scenario_batch" };
+        }
         const project = await transaction.project.findUnique({
           where: { id: input.projectId },
           select: {
@@ -489,6 +618,15 @@ export function createPrismaDingbiaoRepository(
         });
 
         for (const calculation of input.scenarios) {
+          const finalDrawValue = serializeDecimalForPersistence(
+            calculation.finalDrawValueFraction,
+          );
+          const dingbiaoK1 = serializeDecimalForPersistence(
+            calculation.dingbiaoK1Fraction,
+          );
+          const benchmarkPriceM = serializeDecimalForPersistence(
+            calculation.benchmarkPriceM,
+          );
           const scenario = await transaction.dingbiaoScenario.create({
             data: {
               projectId: input.projectId,
@@ -498,27 +636,48 @@ export function createPrismaDingbiaoRepository(
               finalistCount: calculation.finalistCount,
               finalDrawSlot: calculation.finalDrawIndex,
               finalDrawIndex: calculation.finalDrawIndex,
-              finalDrawValue: calculation.finalDrawValueFraction,
-              dingbiaoK1: calculation.dingbiaoK1Fraction,
-              benchmarkPriceM: calculation.benchmarkPriceM,
+              finalDrawValue,
+              finalDrawValueCanonical: finalDrawValue,
+              dingbiaoK1,
+              dingbiaoK1Canonical: dingbiaoK1,
+              benchmarkPriceM,
+              benchmarkPriceMCanonical: benchmarkPriceM,
               version: CURRENT_DINGBIAO_VERSION,
               inputRevision: input.expectedProjectInputRevision,
               ruleVersion: input.ruleVersion,
+              ...(calculatedAt
+                ? { createdAt: calculatedAt, updatedAt: calculatedAt }
+                : {}),
             },
             select: { id: true },
           });
 
           await transaction.dingbiaoResult.createMany({
-            data: calculation.candidates.map((candidate) => ({
-              scenarioId: scenario.id,
-              candidateId: candidate.candidateId,
-              sourceQingbiaoRank: candidate.sourceQingbiaoRank,
-              bidPrice: candidate.bidPrice,
-              netDiscountRateSnapshot: candidate.netDiscountRateFraction,
-              differenceToM: candidate.differenceToM,
-              rank: candidate.rank,
-              isWinner: candidate.isWinner,
-            })),
+            data: calculation.candidates.map((candidate) => {
+              const bidPrice = serializeDecimalForPersistence(
+                candidate.bidPrice,
+              );
+              const netDiscountRateSnapshot =
+                serializeDecimalForPersistence(
+                  candidate.netDiscountRateFraction,
+                );
+              const differenceToM = serializeDecimalForPersistence(
+                candidate.differenceToM,
+              );
+              return {
+                scenarioId: scenario.id,
+                candidateId: candidate.candidateId,
+                sourceQingbiaoRank: candidate.sourceQingbiaoRank,
+                bidPrice,
+                bidPriceCanonical: bidPrice,
+                netDiscountRateSnapshot,
+                netDiscountRateSnapshotCanonical: netDiscountRateSnapshot,
+                differenceToM,
+                differenceToMCanonical: differenceToM,
+                rank: candidate.rank,
+                isWinner: candidate.isWinner,
+              };
+            }),
           });
         }
 

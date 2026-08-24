@@ -15,6 +15,10 @@ import {
   type QingbiaoScenarioV2Result,
 } from "@/domain/qingbiao";
 import { prisma } from "@/server/db/prisma";
+import {
+  deserializePersistedDecimal,
+  serializeDecimalForPersistence,
+} from "@/server/db/decimal-persistence";
 
 const CURRENT_SCENARIO_VERSION = 1;
 const EXPECTED_SCENARIO_COUNT =
@@ -140,11 +144,16 @@ function sameStringSet(left: readonly string[], right: readonly string[]) {
 function mapCandidateResult(result: {
   candidateId: string;
   performanceAverage: { toString(): string };
+  performanceAverageCanonical: string | null;
   performanceScore: { toString(): string };
+  performanceScoreCanonical: string | null;
   priceDifference: { toString(): string };
+  priceDifferenceCanonical: string | null;
   priceRank: number;
   priceScore: { toString(): string };
+  priceScoreCanonical: string | null;
   totalScore: { toString(): string };
+  totalScoreCanonical: string | null;
   finalRank: number;
   candidate: {
     companyName: string;
@@ -168,12 +177,27 @@ function mapCandidateResult(result: {
       result.candidate.similarExperienceScore.toString(),
     otherScore: result.candidate.otherScore.toString(),
     isOurCompany: result.candidate.isOurCompany,
-    performanceAverage: result.performanceAverage.toString(),
-    performanceScore: result.performanceScore.toString(),
-    priceDifference: result.priceDifference.toString(),
+    performanceAverage: deserializePersistedDecimal({
+      canonical: result.performanceAverageCanonical,
+      numeric: result.performanceAverage,
+    }),
+    performanceScore: deserializePersistedDecimal({
+      canonical: result.performanceScoreCanonical,
+      numeric: result.performanceScore,
+    }),
+    priceDifference: deserializePersistedDecimal({
+      canonical: result.priceDifferenceCanonical,
+      numeric: result.priceDifference,
+    }),
     priceRank: result.priceRank,
-    priceScore: result.priceScore.toString(),
-    totalScore: result.totalScore.toString(),
+    priceScore: deserializePersistedDecimal({
+      canonical: result.priceScoreCanonical,
+      numeric: result.priceScore,
+    }),
+    totalScore: deserializePersistedDecimal({
+      canonical: result.totalScoreCanonical,
+      numeric: result.totalScore,
+    }),
     finalRank: result.finalRank,
   };
 }
@@ -194,7 +218,9 @@ async function readSavedCalculation(
       exclusionRuleId: true,
       qingbiaoK2: true,
       referencePriceB: true,
+      referencePriceBCanonical: true,
       qingbiaoK1: true,
+      qingbiaoK1Canonical: true,
       inputRevision: true,
       ruleVersion: true,
       updatedAt: true,
@@ -203,11 +229,16 @@ async function readSavedCalculation(
         select: {
           candidateId: true,
           performanceAverage: true,
+          performanceAverageCanonical: true,
           performanceScore: true,
+          performanceScoreCanonical: true,
           priceDifference: true,
+          priceDifferenceCanonical: true,
           priceRank: true,
           priceScore: true,
+          priceScoreCanonical: true,
           totalScore: true,
+          totalScoreCanonical: true,
           finalRank: true,
           candidate: {
             select: {
@@ -271,9 +302,15 @@ async function readSavedCalculation(
       exclusionRuleId: record.exclusionRuleId,
       ruleIndex: record.exclusionRule.ruleIndex,
       qingbiaoK2Value: record.qingbiaoK2,
-      qingbiaoK1Fraction: record.qingbiaoK1.toString(),
+      qingbiaoK1Fraction: deserializePersistedDecimal({
+        canonical: record.qingbiaoK1Canonical,
+        numeric: record.qingbiaoK1,
+      }),
       qingbiaoK2Rate: qingbiaoK2ValueToRate(record.qingbiaoK2),
-      referencePriceB: record.referencePriceB.toString(),
+      referencePriceB: deserializePersistedDecimal({
+        canonical: record.referencePriceBCanonical,
+        numeric: record.referencePriceB,
+      }),
       orderedResults,
       top5: orderedResults.filter((result) => result.finalRank <= 5),
     });
@@ -550,6 +587,13 @@ export function createPrismaQingbiaoRepository(
             return { status: "invalid_scenario_batch" };
           }
 
+          const referencePriceB = serializeDecimalForPersistence(
+            calculation.referencePriceB,
+          );
+          const qingbiaoK1 = serializeDecimalForPersistence(
+            calculation.qingbiaoK1Fraction,
+          );
+
           const scenario = await transaction.qingbiaoScenario.upsert({
             where: {
               exclusionRuleId_qingbiaoK2: {
@@ -558,8 +602,10 @@ export function createPrismaQingbiaoRepository(
               },
             },
             update: {
-              referencePriceB: calculation.referencePriceB,
-              qingbiaoK1: calculation.qingbiaoK1Fraction,
+              referencePriceB,
+              referencePriceBCanonical: referencePriceB,
+              qingbiaoK1,
+              qingbiaoK1Canonical: qingbiaoK1,
               isLegacy: exclusionRule.ruleIndex === 1,
               inputRevision: input.expectedInputRevision,
               ruleVersion: input.ruleVersion,
@@ -568,8 +614,10 @@ export function createPrismaQingbiaoRepository(
               projectId: input.projectId,
               exclusionRuleId: exclusionRule.id,
               qingbiaoK2: calculation.qingbiaoK2Value,
-              referencePriceB: calculation.referencePriceB,
-              qingbiaoK1: calculation.qingbiaoK1Fraction,
+              referencePriceB,
+              referencePriceBCanonical: referencePriceB,
+              qingbiaoK1,
+              qingbiaoK1Canonical: qingbiaoK1,
               isLegacy: exclusionRule.ruleIndex === 1,
               version: CURRENT_SCENARIO_VERSION,
               inputRevision: input.expectedInputRevision,
@@ -591,17 +639,39 @@ export function createPrismaQingbiaoRepository(
             where: { scenarioId: scenario.id },
           });
           await transaction.qingbiaoResult.createMany({
-            data: calculation.orderedResults.map((candidate) => ({
-              scenarioId: scenario.id,
-              candidateId: candidate.candidateId,
-              performanceAverage: candidate.performanceAverage,
-              performanceScore: candidate.performanceScore,
-              priceDifference: candidate.priceDifference,
-              priceRank: candidate.priceRank,
-              priceScore: candidate.priceScore,
-              totalScore: candidate.totalScore,
-              finalRank: candidate.finalRank,
-            })),
+            data: calculation.orderedResults.map((candidate) => {
+              const performanceAverage = serializeDecimalForPersistence(
+                candidate.performanceAverage,
+              );
+              const performanceScore = serializeDecimalForPersistence(
+                candidate.performanceScore,
+              );
+              const priceDifference = serializeDecimalForPersistence(
+                candidate.priceDifference,
+              );
+              const priceScore = serializeDecimalForPersistence(
+                candidate.priceScore,
+              );
+              const totalScore = serializeDecimalForPersistence(
+                candidate.totalScore,
+              );
+              return {
+                scenarioId: scenario.id,
+                candidateId: candidate.candidateId,
+                performanceAverage,
+                performanceAverageCanonical: performanceAverage,
+                performanceScore,
+                performanceScoreCanonical: performanceScore,
+                priceDifference,
+                priceDifferenceCanonical: priceDifference,
+                priceRank: candidate.priceRank,
+                priceScore,
+                priceScoreCanonical: priceScore,
+                totalScore,
+                totalScoreCanonical: totalScore,
+                finalRank: candidate.finalRank,
+              };
+            }),
           });
         }
 

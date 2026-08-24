@@ -1,4 +1,4 @@
-import { ArrowRight, BarChart3, Building2 } from "lucide-react";
+import { ArrowRight, BarChart3 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -15,48 +15,22 @@ export default async function AnalysisPage({
 }) {
   const { id } = await params;
   const pageData = await getRuntimeAnalysisPageData(id);
-
   if (!pageData) {
     notFound();
-  }
-
-  if (pageData.analysisResult.status === "missing_our_company") {
-    return (
-      <div className="space-y-6">
-        <PageHeader
-          eyebrow="Decision Analysis"
-          title="决策分析"
-          description={`汇总“${pageData.projectName}”已经保存的清标与定标测算结果。`}
-        />
-        <EmptyState
-          icon={Building2}
-          title="请先设置我方单位"
-          description="决策分析需要识别我方单位，才能展示清标排名、模拟中标率和竞争对手统计。"
-          action={
-            <Button asChild>
-              <Link href={`/projects/${pageData.projectId}/candidates`}>
-                前往候选单位
-                <ArrowRight />
-              </Link>
-            </Button>
-          }
-        />
-      </div>
-    );
   }
 
   if (pageData.analysisResult.status === "missing_qingbiao_results") {
     return (
       <div className="space-y-6">
         <PageHeader
-          eyebrow="Decision Analysis"
-          title="决策分析"
-          description={`汇总“${pageData.projectName}”已经保存的清标与定标测算结果。`}
+          eyebrow="Global Analysis"
+          title="全场景决策分析"
+          description={`汇总“${pageData.projectName}”已保存的清标来源与定标结果；分析层不会重新计算业务公式。`}
         />
         <EmptyState
           icon={BarChart3}
-          title="请先完成清标测算后查看决策分析。"
-          description="当前缺少清标抽取值 0%、1%、2%、3% 的完整结果，分析页不会使用示例数据或重新计算结果。"
+          title="请先完成清标测算"
+          description={`当前有效清标来源为 ${pageData.currentQingbiaoScenarioCount}/${pageData.requiredQingbiaoScenarioCount}，完整清标结果是运行全场景分析的前提。`}
           action={
             <Button asChild>
               <Link href={`/projects/${pageData.projectId}/qingbiao`}>
@@ -74,8 +48,14 @@ export default async function AnalysisPage({
     <AnalysisDashboard
       projectId={pageData.projectId}
       projectName={pageData.projectName}
-      qingbiaoResultsAreCurrent={pageData.qingbiaoResultsAreCurrent}
-      dingbiaoResultsAreCurrent={pageData.dingbiaoResultsAreCurrent}
+      qingbiaoState={pageData.qingbiaoState}
+      dingbiaoState={pageData.dingbiaoState}
+      currentQingbiaoScenarioCount={pageData.currentQingbiaoScenarioCount}
+      requiredQingbiaoScenarioCount={pageData.requiredQingbiaoScenarioCount}
+      currentDingbiaoScenarioCount={pageData.currentDingbiaoScenarioCount}
+      expectedValidDingbiaoScenarioCount={
+        pageData.expectedValidDingbiaoScenarioCount
+      }
       analysis={pageData.analysisResult.analysis}
     />
   );
