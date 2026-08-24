@@ -1,6 +1,7 @@
 import Decimal from "decimal.js";
 
 import type { ProjectTypeValue } from "@/domain/projects/project-settings";
+import { percentagePointsToFraction } from "@/lib/percentage";
 import type {
   ExcelImportFieldMapping,
   ExcelImportIssue,
@@ -422,7 +423,7 @@ function parseDecimal(
   }
 }
 
-function parseDisplayedRate(
+function parsePercentageCellToFraction(
   cell: ExcelWorkbookCell | null,
   options: {
     section: "project" | "candidate";
@@ -454,7 +455,9 @@ function parseDisplayedRate(
   }
 
   const value = new Decimal(parsed);
-  const storedRate = cell.isPercentage ? value : value.dividedBy(100);
+  const storedRate = cell.isPercentage
+    ? value
+    : new Decimal(percentagePointsToFraction(value.toString()));
   if (
     options.bounded &&
     (storedRate.isNegative() || storedRate.greaterThan(1))
@@ -674,7 +677,7 @@ function parseProject(
       nonNegative: true,
     },
   );
-  const finalDrawValue1 = parseDisplayedRate(drawSources[0]?.valueCell ?? null, {
+  const finalDrawValue1 = parsePercentageCellToFraction(drawSources[0]?.valueCell ?? null, {
     section: "project",
     sheetName: sheet.name,
     field: "finalDrawValue1",
@@ -682,7 +685,7 @@ function parseProject(
     issues,
     bounded: false,
   });
-  const finalDrawValue2 = parseDisplayedRate(drawSources[1]?.valueCell ?? null, {
+  const finalDrawValue2 = parsePercentageCellToFraction(drawSources[1]?.valueCell ?? null, {
     section: "project",
     sheetName: sheet.name,
     field: "finalDrawValue2",
@@ -690,7 +693,7 @@ function parseProject(
     issues,
     bounded: false,
   });
-  const finalDrawValue3 = parseDisplayedRate(drawSources[2]?.valueCell ?? null, {
+  const finalDrawValue3 = parsePercentageCellToFraction(drawSources[2]?.valueCell ?? null, {
     section: "project",
     sheetName: sheet.name,
     field: "finalDrawValue3",
@@ -877,7 +880,7 @@ function parseCandidates(
       issues,
       positive: true,
     });
-    const netDiscountRate = parseDisplayedRate(
+    const netDiscountRate = parsePercentageCellToFraction(
       valueOf(row, columnNumber(header, "netDiscountRate")),
       {
         section: "candidate",

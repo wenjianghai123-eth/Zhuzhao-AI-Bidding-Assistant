@@ -1,40 +1,29 @@
 import "dotenv/config";
 
-import type { QingbiaoScenarioSelections } from "../src/domain/qingbiao/types";
 import {
-  calculateAndSaveRuntimeQingbiao,
+  calculateAllRuntimeQingbiaoScenarios,
   getRuntimeQingbiaoPageData,
+  getRuntimeQingbiaoScenarioCatalog,
+  saveRuntimeQingbiaoExclusionRule,
 } from "../src/server/application/qingbiao-runtime-service";
 import { prisma } from "../src/server/db/prisma";
 
 const projectId = "qingbiao-persistence-verification";
 const candidates = [
-  { id: "verify-c1", companyName: "清标验收甲公司", bidPrice: "800", score: "80" },
-  { id: "verify-c2", companyName: "清标验收乙公司", bidPrice: "840", score: "90" },
-  { id: "verify-c3", companyName: "清标验收丙公司", bidPrice: "780", score: "70" },
-  { id: "verify-c4", companyName: "清标验收丁公司", bidPrice: "860", score: "100" },
-  { id: "verify-c5", companyName: "清标验收戊公司", bidPrice: "760", score: "60" },
-  { id: "verify-c6", companyName: "清标验收己公司", bidPrice: "880", score: "85" },
+  { id: "verify-c1", companyName: "Verification A", bidPrice: "800", netRate: "0.1038", score: "80" },
+  { id: "verify-c2", companyName: "Verification B", bidPrice: "840", netRate: "0.1044", score: "90" },
+  { id: "verify-c3", companyName: "Verification C", bidPrice: "780", netRate: "0.115", score: "70" },
+  { id: "verify-c4", companyName: "Verification D", bidPrice: "860", netRate: "0.125", score: "100" },
+  { id: "verify-c5", companyName: "Verification E", bidPrice: "760", netRate: "0.135", score: "60" },
+  { id: "verify-c6", companyName: "Verification F", bidPrice: "880", netRate: "0.145", score: "85" },
 ] as const;
-
-const firstSelections: QingbiaoScenarioSelections = {
-  0: ["verify-c1", "verify-c2"],
-  1: ["verify-c3", "verify-c5"],
-  2: ["verify-c4", "verify-c6"],
-  3: ["verify-c1", "verify-c6"],
-};
-
-const secondSelections: QingbiaoScenarioSelections = {
-  0: ["verify-c1", "verify-c3"],
-  1: ["verify-c2", "verify-c4"],
-  2: ["verify-c3", "verify-c6"],
-  3: ["verify-c1", "verify-c5"],
-};
 
 async function cleanVerificationData() {
   await prisma.project.deleteMany({ where: { id: projectId } });
   await prisma.companyPerformance.deleteMany({
-    where: { companyName: { in: candidates.map(({ companyName }) => companyName) } },
+    where: {
+      companyName: { in: candidates.map(({ companyName }) => companyName) },
+    },
   });
 }
 
@@ -44,7 +33,7 @@ try {
   await prisma.project.create({
     data: {
       id: projectId,
-      name: "清标持久化验收项目",
+      name: "Qingbiao V2 persistence verification",
       rule: {
         create: {
           maxBidPrice: "1000",
@@ -62,7 +51,7 @@ try {
           id: candidate.id,
           companyName: candidate.companyName,
           bidPrice: candidate.bidPrice,
-          netDiscountRate: "0.1",
+          netDiscountRate: candidate.netRate,
           trademarkScore: "0",
           technicalScore: "0",
           similarExperienceScore: "5",
@@ -84,45 +73,97 @@ try {
     })),
   });
 
-  const firstResult = await calculateAndSaveRuntimeQingbiao(
-    projectId,
-    firstSelections,
-  );
+  const pageData = await getRuntimeQingbiaoPageData(projectId);
+  if (!pageData || pageData.exclusionRules.length !== 4) {
+    throw new Error("The project did not expose four exclusion-rule slots.");
+  }
+  const firstExclusions = [
+    ["verify-c6"],
+    ["verify-c5", "verify-c6"],
+    ["verify-c4"],
+    [],
+  ] as const;
+  for (const [index, rule] of pageData.exclusionRules.entries()) {
+    const excludedCandidateIds = firstExclusions[index];
+    if (!excludedCandidateIds) {
+      throw new Error("The exclusion fixture is incomplete.");
+    }
+    const saved = await saveRuntimeQingbiaoExclusionRule(
+      projectId,
+      rule.id,
+      excludedCandidateIds,
+    );
+    if (saved.status !== "saved" && saved.status !== "unchanged") {
+      throw new Error(`Rule ${rule.ruleIndex} save failed: ${saved.status}`);
+    }
+  }
+
+  const firstResult = await calculateAllRuntimeQingbiaoScenarios(projectId);
   if (firstResult.status !== "calculated") {
     throw new Error(`First calculation failed: ${firstResult.status}`);
   }
-
-  const secondResult = await calculateAndSaveRuntimeQingbiao(
-    projectId,
-    secondSelections,
+  const firstScenarioIds = firstResult.calculation.scenarios.map(
+    ({ scenarioId }) => scenarioId,
   );
+
+  const secondRule = pageData.exclusionRules.find(
+    ({ ruleIndex }) => ruleIndex === 2,
+  );
+  if (!secondRule) {
+    throw new Error("Rule 2 was not found.");
+  }
+  const changedRule = await saveRuntimeQingbiaoExclusionRule(
+    projectId,
+    secondRule.id,
+    ["verify-c1", "verify-c2"],
+  );
+  if (changedRule.status !== "saved") {
+    throw new Error(`Rule 2 update failed: ${changedRule.status}`);
+  }
+
+  const secondResult = await calculateAllRuntimeQingbiaoScenarios(projectId);
   if (secondResult.status !== "calculated") {
     throw new Error(`Second calculation failed: ${secondResult.status}`);
   }
 
-  const [scenarioCount, resultCount, pageData] = await Promise.all([
-    prisma.qingbiaoScenario.count({ where: { projectId } }),
-    prisma.qingbiaoResult.count({
-      where: { scenario: { projectId } },
-    }),
-    getRuntimeQingbiaoPageData(projectId),
-  ]);
+  const [scenarioCount, resultCount, refreshedPage, catalog] =
+    await Promise.all([
+      prisma.qingbiaoScenario.count({ where: { projectId } }),
+      prisma.qingbiaoResult.count({ where: { scenario: { projectId } } }),
+      getRuntimeQingbiaoPageData(projectId),
+      getRuntimeQingbiaoScenarioCatalog(projectId),
+    ]);
 
-  if (scenarioCount !== 4 || resultCount !== 24) {
+  if (scenarioCount !== 16 || resultCount !== 96) {
     throw new Error(
       `Replacement persistence is incorrect: ${scenarioCount} scenarios, ${resultCount} results.`,
     );
   }
-
-  const k2Zero = pageData?.latestCalculation?.scenarios.find(
-    (scenario) => scenario.qingbiaoK2 === 0,
+  if (refreshedPage?.calculationState.status !== "current") {
+    throw new Error("The recalculated page result is not current.");
+  }
+  if (catalog.status !== "current" || catalog.catalog.scenarios.length !== 16) {
+    throw new Error("The current 16-scenario catalog is unavailable.");
+  }
+  const secondScenarioIds = secondResult.calculation.scenarios.map(
+    ({ scenarioId }) => scenarioId,
+  );
+  if (firstScenarioIds.join(",") !== secondScenarioIds.join(",")) {
+    throw new Error("Recalculation changed stable scenario identities.");
+  }
+  const ruleTwoK2Zero = secondResult.calculation.scenarios.find(
+    ({ ruleIndex, qingbiaoK2Value }) =>
+      ruleIndex === 2 && qingbiaoK2Value === 0,
   );
   if (
-    !k2Zero ||
-    k2Zero.referencePriceB !== "790" ||
-    k2Zero.selectedCandidateIds.join(",") !== "verify-c1,verify-c3"
+    !ruleTwoK2Zero ||
+    ruleTwoK2Zero.qingbiaoK1Fraction !== "0.135" ||
+    ruleTwoK2Zero.referencePriceB !== "878.5" ||
+    !ruleTwoK2Zero.orderedResults.some(
+      ({ candidateId }) => candidateId === "verify-c1",
+    )
   ) {
-    throw new Error("The refreshed page data does not contain the latest K2=0 result.");
+    throw new Error("Rule 2 did not preserve the V2 K1/ranking policy contract.");
   }
 
   console.log(
@@ -130,8 +171,11 @@ try {
       {
         scenariosAfterRecalculation: scenarioCount,
         resultsAfterRecalculation: resultCount,
-        latestK2ZeroReferencePriceB: k2Zero.referencePriceB,
-        latestK2ZeroSelections: k2Zero.selectedCandidateIds,
+        stableScenarioIdentities: true,
+        catalogScenarioCount: catalog.catalog.scenarios.length,
+        ruleTwoK2ZeroK1: ruleTwoK2Zero.qingbiaoK1Fraction,
+        ruleTwoK2ZeroReferencePriceB: ruleTwoK2Zero.referencePriceB,
+        excludedCandidateStillRanked: true,
       },
       null,
       2,

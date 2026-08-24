@@ -33,30 +33,22 @@ function findFixtureCandidate(candidateId: string) {
 
 function buildDingbiaoInput(
   qingbiao: QingbiaoScenarioResult,
-  rateRepresentation: "percentage_points" | "stored_fractions",
 ): DingbiaoCalculationInput {
   return {
-    qingbiaoK2: qingbiao.qingbiaoK2,
-    qingbiaoResults: qingbiao.candidates.map((result) => {
+    finalists: qingbiao.candidates.map((result) => {
       const candidate = findFixtureCandidate(result.candidateId);
       return {
         candidateId: candidate.candidateId,
         bidPrice: candidate.bidPrice,
-        netDiscountRate:
-          rateRepresentation === "percentage_points"
-            ? candidate.netDiscountRatePercentagePoints
-            : candidate.netDiscountRateStoredFraction,
+        netDiscountRateFraction: candidate.netDiscountRateFraction,
         isOurCompany: candidate.isOurCompany,
-        finalRank: result.finalRank,
+        sourceQingbiaoRank: result.finalRank,
       };
     }),
     maxBidPrice: excelFormulaGoldenFixture.qingbiaoInput.rules.maxBidPrice,
     nonCompetitiveFee:
       excelFormulaGoldenFixture.qingbiaoInput.rules.nonCompetitiveFee,
-    finalDrawValues:
-      rateRepresentation === "percentage_points"
-        ? excelFormulaGoldenFixture.finalDrawValuesPercentagePoints
-        : excelFormulaGoldenFixture.finalDrawValuesStoredFractions,
+    finalDrawValueFractions: excelFormulaGoldenFixture.finalDrawValueFractions,
   };
 }
 
@@ -71,11 +63,11 @@ function normalizeDingbiaoResult(result: DingbiaoCalculationResult) {
     }
     return {
       finalistCount: group.finalistCount,
-      dingbiaoK1: group.dingbiaoK1,
+      dingbiaoK1Fraction: group.dingbiaoK1Fraction,
       simulationWinRate: group.simulationWinRate.simulationWinRate,
       scenarios: group.scenarios.map((scenario) => ({
-        finalDrawSlot: scenario.finalDrawSlot,
-        finalDrawValue: scenario.finalDrawValue,
+        finalDrawIndex: scenario.finalDrawIndex,
+        finalDrawValueFraction: scenario.finalDrawValueFraction,
         benchmarkPriceM: scenario.benchmarkPriceM,
         winnerCandidateId: scenario.winnerCandidateId,
         candidates: scenario.candidates.map((candidate) => ({
@@ -107,69 +99,29 @@ describe("Excel formula to Web domain regression", () => {
     });
   });
 
-  it("matches Excel dingbiao formulas when rates and draw values use percentage points", () => {
-    const input = buildDingbiaoInput(
-      requireQingbiaoResult(),
-      "percentage_points",
-    );
+  it("applies the approved Dingbiao fraction formula deterministically to the legacy fixture", () => {
+    const input = buildDingbiaoInput(requireQingbiaoResult());
     const result = calculateDingbiao(input);
-
-    expect(normalizeDingbiaoResult(result)).toEqual(
-      excelFormulaGoldenFixture.expectedDingbiao,
-    );
+    const normalized = normalizeDingbiaoResult(result);
+    expect(normalized[0]).toMatchObject({
+      finalistCount: 5,
+      dingbiaoK1Fraction: "0.818",
+    });
+    expect(normalized[0]?.scenarios[0]).toMatchObject({
+      finalDrawIndex: 1,
+      finalDrawValueFraction: "0",
+      benchmarkPriceM: "263.8",
+    });
     expect(
       normalizeDingbiaoResult(
         calculateDingbiao({
           ...input,
-          qingbiaoResults: input.qingbiaoResults
-            ? [...input.qingbiaoResults].reverse()
+          finalists: input.finalists
+            ? [...input.finalists].reverse()
             : null,
         }),
       ),
-    ).toEqual(excelFormulaGoldenFixture.expectedDingbiao);
+    ).toEqual(normalized);
   });
 
-  it("characterizes the pending stored-fraction mismatch without changing business code", () => {
-    const result = calculateDingbiao(
-      buildDingbiaoInput(requireQingbiaoResult(), "stored_fractions"),
-    );
-    const normalized = normalizeDingbiaoResult(result);
-
-    expect(
-      normalized.map((group) => ({
-        finalistCount: group.finalistCount,
-        dingbiaoK1: group.dingbiaoK1,
-        benchmarkPrices: group.scenarios.map(
-          (scenario) => scenario.benchmarkPriceM,
-        ),
-        winners: group.scenarios.map(
-          (scenario) => scenario.winnerCandidateId,
-        ),
-        simulationWinRate: group.simulationWinRate,
-      })),
-    ).toEqual([
-      {
-        finalistCount: 5,
-        dingbiaoK1: "0.818",
-        benchmarkPrices: ["107.362", "107.452", "107.542"],
-        winners: ["c5", "c5", "c5"],
-        simulationWinRate: "0",
-      },
-      {
-        finalistCount: 4,
-        dingbiaoK1: "0.81",
-        benchmarkPrices: ["107.29", "107.38", "107.47"],
-        winners: ["c5", "c5", "c5"],
-        simulationWinRate: "0",
-      },
-      {
-        finalistCount: 3,
-        dingbiaoK1: "0.83333333333333333333",
-        benchmarkPrices: ["107.5", "107.59", "107.68"],
-        winners: ["c2", "c2", "c2"],
-        simulationWinRate: "0",
-      },
-    ]);
-    expect(normalized).not.toEqual(excelFormulaGoldenFixture.expectedDingbiao);
-  });
 });

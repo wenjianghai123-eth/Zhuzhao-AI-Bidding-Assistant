@@ -89,17 +89,40 @@ Project
   ├─ ProjectRule
   │    └─ ProjectRuleProjectType
   ├─ ProjectCandidate
-  ├─ QingbiaoScenario
-  │    ├─ QingbiaoScenarioCandidate
-  │    ├─ QingbiaoResult
-  │    └─ DingbiaoScenario
-  │         └─ DingbiaoResult
+  ├─ QingbiaoExclusionRule × 4
+  │    ├─ QingbiaoExclusionRuleCandidate
+  │    └─ QingbiaoScenario × 4 K2
+  │         ├─ QingbiaoResult
+  │         └─ DingbiaoScenario × N × finalDrawIndex
+  │              └─ DingbiaoResult
   └─ DingbiaoScenario
 
 CompanyPerformance（跨项目公共数据）
 ```
 
 v0.1.0 尚无独立 `Company` 表。`ProjectCandidate` 与 `CompanyPerformance` 由 application service 按规范化后的 `companyName` 和项目类型匹配；这是后续引入公司主数据 ID 时的迁移点。完整字段、关系和索引见 `docs/data-model.md`。
+
+### 5.1 场景身份
+
+清标场景身份固定为：
+
+```text
+QingbiaoScenarioIdentity =
+exclusionRuleId + qingbiaoK2Value
+```
+
+定标场景身份固定为：
+
+```text
+DingbiaoScenarioIdentity =
+sourceQingbiaoScenarioId + finalistCount + finalDrawIndex
+```
+
+`qingbiaoK2Value` 和 `finalDrawIndex` 都是离散槽位 identity。K2 rate 由唯一转换函数推导；`finalDrawValue` 是独立的 fraction 数值，不能代替 index 进入唯一键。
+
+“全场景入围单位”保持 `scenarioId -> ordered QingbiaoResult Top5` 的二维结构，不按公司名称合并。Repository 提供按项目读取 4 条规则/16 个场景、按规则和 K2 定位场景、按场景读取有序结果，以及按 `sourceQingbiaoScenarioId` 读取定标结果的 API。
+
+当前旧 4 场景页面只读取 `ruleIndex=1 + isLegacy=true` 的兼容数据。这个路径是 temporary/legacy，不赋予规则槽位1任何正式业务含义；新版清标页面上线时应移除。
 
 ## 6. 数据流与修订
 
@@ -121,14 +144,15 @@ Client form → Server Action / Route Handler → Zod validation
 ### 6.3 测算
 
 ```text
-前置条件检查 → 一致输入快照 → domain 纯函数 → 事务覆盖保存
+前置条件检查 → 一致输入快照 → domain 纯函数 → 按场景身份事务保存
             → 结果 DTO → 页面展示与刷新恢复
 ```
 
 - `qingbiaoInputRevision` 标识影响清标的输入版本。
 - `dingbiaoInputRevision` 标识影响定标的输入版本。
 - 场景保存 `inputRevision` 与 `ruleVersion`；不匹配当前输入时不作为有效下游数据。
-- v0.1.0 对同一计算版本采用覆盖保存，不提供用户可见的历史版本回滚。
+- 当前旧清标兼容路径按 ruleIndex=1 的四个 K2 identity 覆盖结果；定标只替换同一个 `sourceQingbiaoScenarioId` 的 9 个结果，不再删除项目内其他来源。
+- staged migration 保留无法推断规则归属的旧行，并以 nullable 新关系和 legacy 标记隔离，不提供用户可见的历史版本回滚。
 
 ## 7. 数值策略
 
@@ -136,7 +160,7 @@ Client form → Server Action / Route Handler → Zod validation
 - Domain 使用 `decimal.js`，禁止使用 JavaScript 二进制浮点执行业务公式。
 - Repository/Application/UI DTO 以十进制字符串传递，不把金额和比例序列化为 JSON number。
 - 排名使用未舍入的计算值；格式化仅发生在展示层。
-- v0.1.0 将净下浮率和定标抽值保存为小数比例，例如 10% 为 `0.10`。定标 M 公式的百分点语义仍是已知待确认项，见 `docs/calculation-rules.md`。
+- 净下浮率、K1、定标抽值和模拟比例均保存/传输为 fraction，例如 10% 为 `0.10`。定标 M 的业务方向冲突仍待确认，见 `docs/calculation-rules.md`。
 
 ## 8. 业务计算隔离
 
@@ -232,11 +256,40 @@ pnpm build
 - 使用同一组 domain、integration 和黄金回归测试验证迁移结果。
 - 不在 application service 中引入 SQLite 专属 SQL。
 
-## 12. 暂缓事项
+## 12. Step 5：新版清标端到端架构（2026-08-24）
+
+`/projects/[id]/qingbiao` 已直接升级为新版页面，不另建 V2 路由。真实调用链为：
+
+```text
+Server Component
+  -> getRuntimeQingbiaoPageData()
+  -> QingbiaoManager（4 条规则配置、Rule -> K2 结果导航）
+  -> Server Action
+  -> calculateAllQingbiaoScenarios()
+  -> calculateQingbiaoScenarioV2() × 16
+  -> QingbiaoRepository.saveCalculationV2()（单个 Prisma transaction）
+  -> 16 个场景、16 组完整排序、16 组有序 Top5
+```
+
+Application 固定并显式传入以下临时业务策略，不依赖 Domain 默认值：
+
+```text
+K1 candidate set = NON_EXCLUDED_CANDIDATES
+ranking candidate set = ALL_CANDIDATES
+```
+
+四条规则的剔除关系分别通过 `QingbiaoExclusionRuleCandidate` 保存。每次变更只替换目标规则下的关联，并在同一事务内增加项目清标、定标输入修订号。计算保存前校验完整的 `4 × 4` 身份、规则当前剔除集合、全部排名候选及规则版本；任一校验或写入失败时整批回滚。
+
+场景以 `(exclusionRuleId, qingbiaoK2)` upsert。重算先按具体 `scenarioId` 删除旧 `QingbiaoResult`，再写入该场景完整结果，既不会产生第 17 个场景，也不会触及其他项目。`getQingbiaoScenarioCatalog(projectId)` 返回 16 项带 `scenarioId` 和每项 `finalRank` 的 Top5，作为 Step 6 定标来源选择的正式接口。
+
+页面用 `QingbiaoScenario.inputRevision` 与 `Project.qingbiaoInputRevision` 区分“尚未计算 / 当前有效 / 已过期”。规则、项目参数和候选单位写入已接入修订号；公共 `CompanyPerformance` 的新增或修改尚不能反向定位所有受影响项目，因此履约变化导致的自动失效仍是后续一致性工作。
+
+新版清标查询、计算和 UI 已不再假设项目只有 4 个 K2 场景。底层仍把 `ruleIndex=1` 的四条新结果标记为 `isLegacy=true`，仅供本步骤未修改的旧定标与 analysis 兼容读取；这不是新版页面的数据筛选条件，也不赋予规则 1 特殊业务含义。
+
+## 13. 暂缓事项
 
 - 定标比例单位与 M 公式的最终业务口径。
 - 最近 12 季度的正式加权规则。
 - 正式分析报告导出和版本历史。
 - 用户认证、权限和审计。
 - PostgreSQL 生产部署、备份恢复和浏览器端自动化。
-

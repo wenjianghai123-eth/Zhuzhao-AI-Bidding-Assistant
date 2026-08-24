@@ -30,16 +30,6 @@ export function formatMoney(value: string | null | undefined) {
     : EMPTY_VALUE;
 }
 
-export function formatPercentagePoints(value: string | null | undefined) {
-  const decimal = parseFiniteDecimal(value);
-  return decimal ? `${decimal.toFixed(2)}%` : EMPTY_VALUE;
-}
-
-export function formatStoredPercentage(value: string | null | undefined) {
-  const decimal = parseFiniteDecimal(value);
-  return decimal ? `${decimal.times(100).toFixed(2)}%` : EMPTY_VALUE;
-}
-
 export function formatScore(value: string | null | undefined) {
   const decimal = parseFiniteDecimal(value);
   return decimal ? decimal.toFixed(2) : EMPTY_VALUE;

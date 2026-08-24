@@ -11,7 +11,7 @@ import {
 const validValues: CandidateFormValues = {
   companyName: "华南建设股份有限公司",
   bidPrice: "7850.25",
-  netDiscountRate: "5.25",
+  netDiscountRate: "10.38",
   trademarkScore: "2",
   technicalScore: "3.5",
   similarExperienceScore: "8",
@@ -31,7 +31,7 @@ describe("candidateFormSchema", () => {
     expect(toProjectCandidateInput(result.data)).toEqual({
       companyName: "华南建设股份有限公司",
       bidPrice: "7850.25",
-      netDiscountRate: "0.0525",
+      netDiscountRate: "0.1038",
       trademarkScore: "2",
       technicalScore: "3.5",
       similarExperienceScore: "8",

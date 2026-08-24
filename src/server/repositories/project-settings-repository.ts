@@ -2,6 +2,7 @@ import type {
   ProjectSettingsInput,
   ProjectSettingsSnapshot,
 } from "@/domain/projects/project-settings";
+import { QINGBIAO_EXCLUSION_RULE_INDEXES } from "@/domain/qingbiao";
 import { prisma } from "@/server/db/prisma";
 
 export interface ProjectSettingsRepository {
@@ -65,6 +66,11 @@ export const prismaProjectSettingsRepository: ProjectSettingsRepository = {
               })),
             },
           },
+        },
+        qingbiaoExclusionRules: {
+          create: QINGBIAO_EXCLUSION_RULE_INDEXES.map((ruleIndex) => ({
+            ruleIndex,
+          })),
         },
       },
       select: { id: true },

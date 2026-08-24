@@ -7,6 +7,10 @@ import {
   type ProjectSettingsSnapshot,
   type ProjectTypeValue,
 } from "@/domain/projects/project-settings";
+import {
+  fractionToPercentagePoints,
+  parsePercentageInput,
+} from "@/lib/percentage";
 
 export const PROJECT_TYPE_OPTIONS: readonly {
   value: ProjectTypeValue;
@@ -197,9 +201,9 @@ export function toProjectSettingsInput(
     projectTypes: values.projectTypes,
     totalBidPriceScore: new Decimal(values.totalBidPriceScore).toString(),
     rankDeduction: new Decimal(values.rankDeduction).toString(),
-    finalDrawValue1: new Decimal(values.finalDrawValue1).dividedBy(100).toString(),
-    finalDrawValue2: new Decimal(values.finalDrawValue2).dividedBy(100).toString(),
-    finalDrawValue3: new Decimal(values.finalDrawValue3).dividedBy(100).toString(),
+    finalDrawValue1: parsePercentageInput(values.finalDrawValue1),
+    finalDrawValue2: parsePercentageInput(values.finalDrawValue2),
+    finalDrawValue3: parsePercentageInput(values.finalDrawValue3),
   };
 }
 
@@ -213,8 +217,8 @@ export function toProjectSettingsFormValues(
     projectTypes: [...project.projectTypes],
     totalBidPriceScore: new Decimal(project.totalBidPriceScore).toString(),
     rankDeduction: new Decimal(project.rankDeduction).toString(),
-    finalDrawValue1: new Decimal(project.finalDrawValue1).times(100).toString(),
-    finalDrawValue2: new Decimal(project.finalDrawValue2).times(100).toString(),
-    finalDrawValue3: new Decimal(project.finalDrawValue3).times(100).toString(),
+    finalDrawValue1: fractionToPercentagePoints(project.finalDrawValue1),
+    finalDrawValue2: fractionToPercentagePoints(project.finalDrawValue2),
+    finalDrawValue3: fractionToPercentagePoints(project.finalDrawValue3),
   };
 }

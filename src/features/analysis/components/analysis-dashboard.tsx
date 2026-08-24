@@ -39,10 +39,9 @@ import type {
 import { DINGBIAO_FINALIST_COUNTS } from "@/domain/dingbiao";
 import {
   formatMoney,
-  formatPercentagePoints,
   formatScore,
-  formatStoredPercentage,
 } from "@/lib/formatters";
+import { formatPercentageFraction } from "@/lib/percentage";
 import { cn } from "@/lib/utils";
 
 function findWinRate(
@@ -58,7 +57,7 @@ function WinRateValue({ item }: { item: AnalysisSimulationWinRate | undefined })
   if (!item || item.status === "unavailable") {
     return <span className="text-base text-muted-foreground">不可模拟</span>;
   }
-  return <>{formatPercentagePoints(item.simulationWinRate)}</>;
+  return <>{formatPercentageFraction(item.simulationWinRate)}</>;
 }
 
 function CoreMetrics({ analysis }: { analysis: DecisionAnalysis }) {
@@ -361,7 +360,7 @@ function DingbiaoMatrix({
                 </TableCell>
                 <TableCell>
                   <span className="font-medium">
-                    {formatStoredPercentage(item.finalDrawValue)}
+                    {formatPercentageFraction(item.finalDrawValue)}
                   </span>
                   <span className="ml-2 text-xs text-muted-foreground">
                     抽值{item.finalDrawSlot}
@@ -481,7 +480,7 @@ function BestScenarios({ analysis }: { analysis: DecisionAnalysis }) {
               <p className="text-2xl font-semibold">N={bestDingbiao.finalistCount}</p>
               <p className="mt-2 text-sm text-muted-foreground">
                 我方模拟中标率为{" "}
-                {formatPercentagePoints(bestDingbiao.simulationWinRate)}，共预测中标{" "}
+                {formatPercentageFraction(bestDingbiao.simulationWinRate)}，共预测中标{" "}
                 {bestDingbiao.winCount} / {bestDingbiao.simulationCount} 次。
               </p>
             </>

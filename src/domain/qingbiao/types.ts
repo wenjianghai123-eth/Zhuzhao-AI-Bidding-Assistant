@@ -1,13 +1,21 @@
 import type { ProjectTypeValue } from "@/domain/projects/project-settings";
+import { percentagePointsToFraction } from "@/lib/percentage";
 
 export const QINGBIAO_K2_VALUES = [0, 1, 2, 3] as const;
 
 export const QINGBIAO_RULE_VERSION = "qingbiao-mvp-v1";
 
-export type QingbiaoK2 = (typeof QINGBIAO_K2_VALUES)[number];
+export type QingbiaoK2Value = (typeof QINGBIAO_K2_VALUES)[number];
+export type QingbiaoK2 = QingbiaoK2Value;
 
-export function isQingbiaoK2(value: number): value is QingbiaoK2 {
+export function isQingbiaoK2(value: number): value is QingbiaoK2Value {
   return QINGBIAO_K2_VALUES.some((qingbiaoK2) => qingbiaoK2 === value);
+}
+
+export function qingbiaoK2ValueToRate(
+  qingbiaoK2Value: QingbiaoK2Value,
+): string {
+  return percentagePointsToFraction(qingbiaoK2Value.toString());
 }
 
 export type CandidatePerformanceInput =

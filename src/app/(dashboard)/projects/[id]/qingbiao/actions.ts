@@ -5,13 +5,13 @@ import { z } from "zod";
 
 import {
   getQingbiaoActionValidationMessages,
-  qingbiaoCalculationActionSchema,
-  toQingbiaoScenarioSelections,
+  qingbiaoExclusionRuleActionSchema,
 } from "@/features/qingbiao/qingbiao-action-schema";
 import {
-  calculateAndSaveRuntimeQingbiao,
+  calculateAllRuntimeQingbiaoScenarios,
+  saveRuntimeQingbiaoExclusionRule,
 } from "@/server/application/qingbiao-runtime-service";
-import type { CalculateAndSaveQingbiaoResult } from "@/server/application/qingbiao-service";
+import type { CalculateAllQingbiaoScenariosResult } from "@/server/application/qingbiao-service";
 import type { SavedQingbiaoCalculationSnapshot } from "@/server/repositories/qingbiao-repository";
 
 export type QingbiaoActionResult =
@@ -25,67 +25,137 @@ export type QingbiaoActionResult =
   | { status: "conflict"; message: string }
   | { status: "failure"; message: string };
 
-function mapServiceResult(
-  result: CalculateAndSaveQingbiaoResult,
+export type SaveQingbiaoExclusionRuleActionResult =
+  | {
+      status: "success";
+      message: string;
+      exclusionRuleId: string;
+      candidateIds: readonly string[];
+      inputRevision: number;
+      changed: boolean;
+    }
+  | { status: "invalid"; message: string; issues: readonly string[] }
+  | { status: "not_found"; message: string }
+  | { status: "failure"; message: string };
+
+const projectIdSchema = z.string().trim().min(1);
+
+function revalidateQingbiaoPaths(projectId: string) {
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/qingbiao`);
+}
+
+function mapCalculationResult(
+  result: CalculateAllQingbiaoScenariosResult,
 ): QingbiaoActionResult {
-  if (result.status === "calculated") {
-    return {
-      status: "success",
-      message: "四个清标场景测算并保存成功",
-      calculation: result.calculation,
-    };
+  switch (result.status) {
+    case "calculated":
+      return {
+        status: "success",
+        message: "16套清标场景测算并保存成功",
+        calculation: result.calculation,
+      };
+    case "project_not_found":
+      return { status: "not_found", message: "当前项目不存在" };
+    case "input_revision_conflict":
+      return {
+        status: "conflict",
+        message: "项目配置已发生变化，请刷新页面后重新测算",
+      };
+    case "validation_error":
+      return {
+        status: "invalid",
+        message: "清标测算未通过业务校验",
+        issues: result.issues,
+      };
+    case "persistence_error":
+      return { status: "failure", message: "清标结果保存失败，请稍后重试" };
   }
-  if (result.status === "project_not_found") {
-    return { status: "not_found", message: "当前项目不存在" };
-  }
-  if (result.status === "input_revision_conflict") {
-    return {
-      status: "conflict",
-      message: "项目参数或候选单位已发生变化，请刷新页面后重新测算",
-    };
-  }
-  if (result.status === "validation_error") {
-    return {
-      status: "invalid",
-      message: "清标测算未通过业务校验",
-      issues: result.issues,
-    };
-  }
-  return { status: "failure", message: "清标结果保存失败，请稍后重试" };
 }
 
 export async function calculateQingbiaoAction(
   projectId: string,
-  input: unknown,
 ): Promise<QingbiaoActionResult> {
-  const projectIdValidation = z.string().trim().min(1).safeParse(projectId);
+  const projectIdValidation = projectIdSchema.safeParse(projectId);
   if (!projectIdValidation.success) {
     return { status: "not_found", message: "未找到当前项目" };
   }
 
-  const validation = qingbiaoCalculationActionSchema.safeParse(input);
+  try {
+    const actionResult = mapCalculationResult(
+      await calculateAllRuntimeQingbiaoScenarios(projectIdValidation.data),
+    );
+    if (actionResult.status === "success") {
+      revalidateQingbiaoPaths(projectIdValidation.data);
+    }
+    return actionResult;
+  } catch {
+    return { status: "failure", message: "清标测算失败，请稍后重试" };
+  }
+}
+
+export async function saveQingbiaoExclusionRuleAction(
+  projectId: string,
+  input: unknown,
+): Promise<SaveQingbiaoExclusionRuleActionResult> {
+  const projectIdValidation = projectIdSchema.safeParse(projectId);
+  if (!projectIdValidation.success) {
+    return { status: "not_found", message: "未找到当前项目" };
+  }
+  const validation = qingbiaoExclusionRuleActionSchema.safeParse(input);
   if (!validation.success) {
     return {
       status: "invalid",
-      message: "请完成四个清标场景的候选单位选择",
+      message: "推优规则配置未通过校验",
       issues: getQingbiaoActionValidationMessages(validation.error),
     };
   }
 
   try {
-    const result = await calculateAndSaveRuntimeQingbiao(
+    const result = await saveRuntimeQingbiaoExclusionRule(
       projectIdValidation.data,
-      toQingbiaoScenarioSelections(validation.data),
+      validation.data.exclusionRuleId,
+      validation.data.candidateIds,
     );
-    const actionResult = mapServiceResult(result);
-
-    if (actionResult.status === "success") {
-      revalidatePath(`/projects/${projectIdValidation.data}`);
-      revalidatePath(`/projects/${projectIdValidation.data}/qingbiao`);
+    switch (result.status) {
+      case "saved":
+      case "unchanged":
+        revalidateQingbiaoPaths(projectIdValidation.data);
+        return {
+          status: "success",
+          message:
+            result.status === "saved"
+              ? "推优规则已保存，请重新进行清标测算"
+              : "推优规则配置未发生变化",
+          exclusionRuleId: validation.data.exclusionRuleId,
+          candidateIds: validation.data.candidateIds,
+          inputRevision: result.inputRevision,
+          changed: result.status === "saved",
+        };
+      case "project_or_rule_not_found":
+        return { status: "not_found", message: "当前项目或推优规则不存在" };
+      case "all_candidates_excluded":
+        return {
+          status: "invalid",
+          message: "推优规则配置未保存",
+          issues: [
+            "当前推优规则已剔除全部候选单位，无法计算清标 K1。",
+          ],
+        };
+      case "invalid_candidates":
+        return {
+          status: "invalid",
+          message: "推优规则配置未保存",
+          issues: ["被剔除单位必须属于当前项目。"],
+        };
+      case "duplicate_candidate":
+        return {
+          status: "invalid",
+          message: "推优规则配置未保存",
+          issues: ["同一候选单位不能重复剔除。"],
+        };
     }
-
-    return actionResult;
   } catch {
-    return { status: "failure", message: "清标测算失败，请稍后重试" };
+    return { status: "failure", message: "推优规则保存失败，请稍后重试" };
   }
 }

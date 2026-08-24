@@ -31,7 +31,7 @@ export async function calculateDingbiaoAction(
   if (!validation.success) {
     return {
       status: "invalid",
-      message: "请选择有效的清标抽取值",
+      message: "请选择有效的清标场景",
       issues: validation.error.issues.map((issue) => issue.message),
     };
   }
@@ -39,7 +39,7 @@ export async function calculateDingbiaoAction(
   try {
     const result = await calculateAndSaveRuntimeDingbiao(
       projectIdValidation.data,
-      validation.data.qingbiaoK2,
+      validation.data.sourceQingbiaoScenarioId,
     );
 
     if (result.status === "calculated") {
@@ -58,6 +58,12 @@ export async function calculateDingbiaoAction(
       return {
         status: "not_found",
         message: "所选清标场景不存在，请先重新完成清标测算",
+      };
+    }
+    if (result.status === "qingbiao_result_stale") {
+      return {
+        status: "conflict",
+        message: "当前清标结果已过期，请重新完成清标测算后再进行定标。",
       };
     }
     if (result.status === "insufficient_candidates") {

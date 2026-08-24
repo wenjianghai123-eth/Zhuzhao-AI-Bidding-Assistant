@@ -1,11 +1,14 @@
-import type { QingbiaoK2 } from "@/domain/qingbiao";
 import {
-  calculateAndSaveDingbiao,
+  calculateDingbiaoForQingbiaoScenario,
   getDingbiaoPageData,
 } from "@/server/application/dingbiao-service";
+import { getRuntimeQingbiaoScenarioCatalog } from "@/server/application/qingbiao-runtime-service";
 import { prismaDingbiaoRepository } from "@/server/repositories/dingbiao-repository";
 
-const runtimeDependencies = { repository: prismaDingbiaoRepository };
+const runtimeDependencies = {
+  repository: prismaDingbiaoRepository,
+  qingbiaoScenarioCatalogReader: getRuntimeQingbiaoScenarioCatalog,
+};
 
 export function getRuntimeDingbiaoPageData(projectId: string) {
   return getDingbiaoPageData(projectId, runtimeDependencies);
@@ -13,11 +16,11 @@ export function getRuntimeDingbiaoPageData(projectId: string) {
 
 export function calculateAndSaveRuntimeDingbiao(
   projectId: string,
-  qingbiaoK2: QingbiaoK2,
+  sourceQingbiaoScenarioId: string,
 ) {
-  return calculateAndSaveDingbiao(
+  return calculateDingbiaoForQingbiaoScenario(
     projectId,
-    qingbiaoK2,
+    sourceQingbiaoScenarioId,
     runtimeDependencies,
   );
 }

@@ -15,6 +15,7 @@ import type {
   DingbiaoCompetitivenessItem,
   QingbiaoCompetitivenessItem,
 } from "@/domain/analysis/types";
+import { fractionToPercentagePoints } from "@/lib/percentage";
 
 function compareCandidateIds(left: string, right: string) {
   if (left === right) {
@@ -194,7 +195,9 @@ function findBestDingbiaoScenario(
 }
 
 function formatSummaryPercentage(value: string) {
-  return new Decimal(value).toDecimalPlaces(2).toString();
+  return new Decimal(fractionToPercentagePoints(value))
+    .toDecimalPlaces(2)
+    .toString();
 }
 
 export function buildDecisionAnalysis(

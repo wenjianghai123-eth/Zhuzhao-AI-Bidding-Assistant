@@ -6,8 +6,7 @@ import type {
 } from "@/domain/qingbiao";
 
 interface ExcelGoldenCandidate extends QingbiaoCandidateInput {
-  netDiscountRatePercentagePoints: string;
-  netDiscountRateStoredFraction: string;
+  netDiscountRateFraction: string;
   isOurCompany: boolean;
 }
 
@@ -39,8 +38,7 @@ const candidates: readonly ExcelGoldenCandidate[] = [
     technicalScore: "9",
     similarExperienceScore: "5",
     otherScore: "5",
-    netDiscountRatePercentagePoints: "76",
-    netDiscountRateStoredFraction: "0.76",
+    netDiscountRateFraction: "0.76",
     isOurCompany: false,
   },
   {
@@ -51,8 +49,7 @@ const candidates: readonly ExcelGoldenCandidate[] = [
     technicalScore: "9",
     similarExperienceScore: "5",
     otherScore: "5",
-    netDiscountRatePercentagePoints: "80",
-    netDiscountRateStoredFraction: "0.8",
+    netDiscountRateFraction: "0.8",
     isOurCompany: false,
   },
   {
@@ -63,8 +60,7 @@ const candidates: readonly ExcelGoldenCandidate[] = [
     technicalScore: "9",
     similarExperienceScore: "5",
     otherScore: "5",
-    netDiscountRatePercentagePoints: "82",
-    netDiscountRateStoredFraction: "0.82",
+    netDiscountRateFraction: "0.82",
     isOurCompany: true,
   },
   {
@@ -75,8 +71,7 @@ const candidates: readonly ExcelGoldenCandidate[] = [
     technicalScore: "9",
     similarExperienceScore: "5",
     otherScore: "5",
-    netDiscountRatePercentagePoints: "85",
-    netDiscountRateStoredFraction: "0.85",
+    netDiscountRateFraction: "0.85",
     isOurCompany: false,
   },
   {
@@ -87,8 +82,7 @@ const candidates: readonly ExcelGoldenCandidate[] = [
     technicalScore: "9",
     similarExperienceScore: "5",
     otherScore: "5",
-    netDiscountRatePercentagePoints: "74",
-    netDiscountRateStoredFraction: "0.74",
+    netDiscountRateFraction: "0.74",
     isOurCompany: false,
   },
   {
@@ -99,8 +93,7 @@ const candidates: readonly ExcelGoldenCandidate[] = [
     technicalScore: "9",
     similarExperienceScore: "5",
     otherScore: "5",
-    netDiscountRatePercentagePoints: "88",
-    netDiscountRateStoredFraction: "0.88",
+    netDiscountRateFraction: "0.88",
     isOurCompany: false,
   },
 ];
@@ -120,7 +113,7 @@ const qingbiaoInput: QingbiaoScenarioInput = {
 const expectedQingbiao: QingbiaoScenarioResult = {
   qingbiaoK2: 0,
   referencePriceB: "820",
-  qingbiaoK1: "20",
+  qingbiaoK1: "0.2",
   candidates: [
     {
       candidateId: "c2",
@@ -188,8 +181,8 @@ const expectedQingbiao: QingbiaoScenarioResult = {
 const expectedDingbiao: readonly ExcelGoldenDingbiaoGroupExpectation[] = [
   {
     finalistCount: 5,
-    dingbiaoK1: "81.8",
-    simulationWinRate: "66.666666666666666667",
+    dingbiaoK1: "0.818",
+    simulationWinRate: "0.66666666666666666667",
     scenarios: [
       {
         finalDrawSlot: 1,
@@ -206,7 +199,7 @@ const expectedDingbiao: readonly ExcelGoldenDingbiaoGroupExpectation[] = [
       },
       {
         finalDrawSlot: 2,
-        finalDrawValue: "1",
+        finalDrawValue: "0.01",
         benchmarkPriceM: "845.2",
         winnerCandidateId: "c3",
         candidates: [
@@ -219,7 +212,7 @@ const expectedDingbiao: readonly ExcelGoldenDingbiaoGroupExpectation[] = [
       },
       {
         finalDrawSlot: 3,
-        finalDrawValue: "2",
+        finalDrawValue: "0.02",
         benchmarkPriceM: "854.2",
         winnerCandidateId: "c4",
         candidates: [
@@ -234,8 +227,8 @@ const expectedDingbiao: readonly ExcelGoldenDingbiaoGroupExpectation[] = [
   },
   {
     finalistCount: 4,
-    dingbiaoK1: "81",
-    simulationWinRate: "66.666666666666666667",
+    dingbiaoK1: "0.81",
+    simulationWinRate: "0.66666666666666666667",
     scenarios: [
       {
         finalDrawSlot: 1,
@@ -251,7 +244,7 @@ const expectedDingbiao: readonly ExcelGoldenDingbiaoGroupExpectation[] = [
       },
       {
         finalDrawSlot: 2,
-        finalDrawValue: "1",
+        finalDrawValue: "0.01",
         benchmarkPriceM: "838",
         winnerCandidateId: "c3",
         candidates: [
@@ -263,7 +256,7 @@ const expectedDingbiao: readonly ExcelGoldenDingbiaoGroupExpectation[] = [
       },
       {
         finalDrawSlot: 3,
-        finalDrawValue: "2",
+        finalDrawValue: "0.02",
         benchmarkPriceM: "847",
         winnerCandidateId: "c3",
         candidates: [
@@ -277,8 +270,8 @@ const expectedDingbiao: readonly ExcelGoldenDingbiaoGroupExpectation[] = [
   },
   {
     finalistCount: 3,
-    dingbiaoK1: "83.333333333333333333",
-    simulationWinRate: "100",
+    dingbiaoK1: "0.83333333333333333333",
+    simulationWinRate: "1",
     scenarios: [
       {
         finalDrawSlot: 1,
@@ -293,7 +286,7 @@ const expectedDingbiao: readonly ExcelGoldenDingbiaoGroupExpectation[] = [
       },
       {
         finalDrawSlot: 2,
-        finalDrawValue: "1",
+        finalDrawValue: "0.01",
         benchmarkPriceM: "859",
         winnerCandidateId: "c3",
         candidates: [
@@ -304,7 +297,7 @@ const expectedDingbiao: readonly ExcelGoldenDingbiaoGroupExpectation[] = [
       },
       {
         finalDrawSlot: 3,
-        finalDrawValue: "2",
+        finalDrawValue: "0.02",
         benchmarkPriceM: "868",
         winnerCandidateId: "c3",
         candidates: [
@@ -321,8 +314,7 @@ export const excelFormulaGoldenFixture = {
   source: "投标伴侣方案设计.xlsx中的文字公式（原文件没有数值样例）",
   candidates,
   qingbiaoInput,
-  finalDrawValuesPercentagePoints: ["0", "1", "2"] as const,
-  finalDrawValuesStoredFractions: ["0", "0.01", "0.02"] as const,
+  finalDrawValueFractions: ["0", "0.01", "0.02"] as const,
   expectedQingbiao,
   expectedDingbiao,
 };

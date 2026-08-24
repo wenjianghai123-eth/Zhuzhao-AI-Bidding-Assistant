@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import { QINGBIAO_EXCLUSION_RULE_INDEXES } from "../src/domain/qingbiao/exclusion-rule";
 import { prisma } from "../src/server/db/prisma";
 
 // Demo / Development Data only. This seed must never run automatically in production.
@@ -122,6 +123,14 @@ async function main() {
       status: "DRAFT",
     },
   });
+
+  for (const ruleIndex of QINGBIAO_EXCLUSION_RULE_INDEXES) {
+    await prisma.qingbiaoExclusionRule.upsert({
+      where: { projectId_ruleIndex: { projectId, ruleIndex } },
+      update: {},
+      create: { projectId, ruleIndex },
+    });
+  }
 
   await prisma.projectRule.upsert({
     where: { projectId },

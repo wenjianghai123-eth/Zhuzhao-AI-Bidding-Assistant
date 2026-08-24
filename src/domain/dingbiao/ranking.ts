@@ -1,7 +1,7 @@
 import Decimal from "decimal.js";
 
 import type {
-  DingbiaoQingbiaoResultInput,
+  DingbiaoFinalistInput,
   DingbiaoRankedCandidateResult,
 } from "@/domain/dingbiao/types";
 
@@ -20,13 +20,20 @@ export function calculateDifferenceToBenchmark(
 }
 
 export function rankDingbiaoCandidates(
-  candidates: readonly DingbiaoQingbiaoResultInput[],
+  candidates: readonly (DingbiaoFinalistInput & {
+    netDiscountRateFraction: string;
+  })[],
   benchmarkPriceM: string,
 ): readonly DingbiaoRankedCandidateResult[] {
   return candidates
     .map((candidate) => ({
       candidateId: candidate.candidateId,
       bidPrice: new Decimal(candidate.bidPrice).toString(),
+      netDiscountRateFraction: new Decimal(
+        candidate.netDiscountRateFraction,
+      ).toString(),
+      sourceQingbiaoRank: candidate.sourceQingbiaoRank,
+      isOurCompany: candidate.isOurCompany,
       differenceToM: calculateDifferenceToBenchmark(
         candidate.bidPrice,
         benchmarkPriceM,

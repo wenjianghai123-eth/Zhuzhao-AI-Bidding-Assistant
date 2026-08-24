@@ -48,7 +48,6 @@ export function calculateQingbiaoK1(
 
   return new Decimal(1)
     .minus(referencePrice.minus(fee).dividedBy(maxPrice.minus(fee)))
-    .times(100)
     .toString();
 }
 

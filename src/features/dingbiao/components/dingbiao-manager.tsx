@@ -35,6 +35,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -44,44 +51,37 @@ import {
 } from "@/components/ui/table";
 import {
   DINGBIAO_FINALIST_COUNTS,
+  DINGBIAO_FINAL_DRAW_INDEXES,
   type DingbiaoFinalistCount,
   type DingbiaoFinalistGroupResult,
   type DingbiaoSimulationScenarioResult,
-  type FinalDrawSlot,
+  type FinalDrawIndex,
 } from "@/domain/dingbiao";
-import {
-  QINGBIAO_K2_VALUES,
-  type QingbiaoK2,
-} from "@/domain/qingbiao";
+import { formatDateTime, formatMoney } from "@/lib/formatters";
+import { formatPercentageFraction } from "@/lib/percentage";
+import { cn } from "@/lib/utils";
 import type {
   DingbiaoCalculationView,
   DingbiaoPageData,
   DingbiaoQingbiaoScenarioPageData,
 } from "@/server/application/dingbiao-service";
-import { cn } from "@/lib/utils";
-import {
-  formatDateTime,
-  formatMoney,
-  formatPercentagePoints,
-  formatStoredPercentage,
-} from "@/lib/formatters";
 
 interface DetailSelection {
   finalistCount: DingbiaoFinalistCount;
-  finalDrawSlot: FinalDrawSlot;
+  finalDrawIndex: FinalDrawIndex;
 }
 
-function initialQingbiaoK2(data: DingbiaoPageData): QingbiaoK2 {
-  const latestQingbiaoK2 = data.latestCalculation?.qingbiaoK2;
+function initialSourceScenarioId(data: DingbiaoPageData) {
+  const latestSourceId = data.latestCalculation?.sourceQingbiaoScenarioId;
   if (
-    latestQingbiaoK2 !== undefined &&
+    latestSourceId &&
     data.qingbiaoScenarios.some(
-      (scenario) => scenario.qingbiaoK2 === latestQingbiaoK2,
+      ({ scenarioId }) => scenarioId === latestSourceId,
     )
   ) {
-    return latestQingbiaoK2;
+    return latestSourceId;
   }
-  return data.qingbiaoScenarios[0]?.qingbiaoK2 ?? 0;
+  return data.qingbiaoScenarios[0]?.scenarioId ?? "";
 }
 
 function findGroup(
@@ -95,115 +95,86 @@ function findGroup(
 
 function findScenario(
   group: DingbiaoFinalistGroupResult | undefined,
-  finalDrawSlot: FinalDrawSlot,
+  finalDrawIndex: FinalDrawIndex,
 ) {
   return group?.status === "available"
     ? group.scenarios.find(
-        (scenario) => scenario.finalDrawSlot === finalDrawSlot,
+        (scenario) => scenario.finalDrawIndex === finalDrawIndex,
       )
     : undefined;
 }
 
-function QingbiaoPreview({
+function SourcePreview({
   scenario,
-  candidatesById,
 }: {
   scenario: DingbiaoQingbiaoScenarioPageData;
-  candidatesById: ReadonlyMap<string, DingbiaoPageData["candidates"][number]>;
 }) {
   return (
-    <div className="grid gap-4 md:grid-cols-3">
-      {scenario.previewGroups.map((group) => (
-        <Card key={group.finalistCount} size="sm">
-          <CardHeader className="border-b">
-            <div className="flex items-center justify-between gap-2">
-              <CardTitle>Top{group.finalistCount}</CardTitle>
-              {group.status === "available" ? (
-                <Badge variant="outline" className="text-emerald-700">
-                  可模拟
-                </Badge>
-              ) : (
-                <Badge variant="outline" className="border-amber-300 text-amber-800">
-                  不可模拟
-                </Badge>
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-4">
+        <div className="rounded-lg border p-3">
+          <p className="text-xs text-muted-foreground">推优剔除规则</p>
+          <p className="mt-1 font-semibold">规则{scenario.ruleIndex}</p>
+        </div>
+        <div className="rounded-lg border p-3">
+          <p className="text-xs text-muted-foreground">清标 K2</p>
+          <p className="mt-1 font-semibold">{scenario.qingbiaoK2Value}%</p>
+        </div>
+        <div className="rounded-lg border p-3">
+          <p className="text-xs text-muted-foreground">清标 K1</p>
+          <p className="mt-1 font-semibold">
+            {formatPercentageFraction(scenario.qingbiaoK1Fraction)}
+          </p>
+        </div>
+        <div className="rounded-lg border p-3">
+          <p className="text-xs text-muted-foreground">参考报价 B</p>
+          <p className="mt-1 font-semibold tabular-nums">
+            {formatMoney(scenario.referencePriceB)}
+          </p>
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-2 text-sm font-medium">有序 Top5</p>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          {scenario.top5.map((candidate) => (
+            <div
+              key={candidate.candidateId}
+              className={cn(
+                "flex min-w-0 items-center gap-2 rounded-lg border p-2.5",
+                candidate.isOurCompany && "border-primary/30 bg-primary/5",
               )}
+            >
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">
+                {candidate.finalRank}
+              </span>
+              <span className="min-w-0 flex-1 truncate font-medium">
+                {candidate.companyName}
+              </span>
+              {candidate.isOurCompany ? <Badge>我方</Badge> : null}
             </div>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {group.status === "available" ? (
-              group.finalists.map((finalist) => {
-                const candidate = candidatesById.get(finalist.candidateId);
-                return candidate ? (
-                  <div
-                    key={finalist.candidateId}
-                    className={cn(
-                      "flex items-center gap-2 rounded-lg border p-2.5",
-                      candidate.isOurCompany && "border-primary/30 bg-primary/5",
-                    )}
-                  >
-                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">
-                      {finalist.finalRank}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate font-medium">
-                      {candidate.companyName}
-                    </span>
-                    {candidate.isOurCompany ? <Badge>我方</Badge> : null}
-                  </div>
-                ) : null;
-              })
-            ) : (
-              <div className="flex items-start gap-2 py-4 text-sm text-amber-800">
-                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                当前仅 {group.availableCandidateCount} 家，至少需要
-                {group.requiredCandidateCount} 家。
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ))}
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
 
 function ResultSummaryCards({
-  selectedQingbiaoK2,
-  selectedQingbiaoScenario,
+  scenario,
   calculation,
-  candidates,
 }: {
-  selectedQingbiaoK2: QingbiaoK2;
-  selectedQingbiaoScenario: DingbiaoQingbiaoScenarioPageData;
+  scenario: DingbiaoQingbiaoScenarioPageData;
   calculation: DingbiaoCalculationView | null;
-  candidates: DingbiaoPageData["candidates"];
 }) {
-  const ourCompany = candidates.find((candidate) => candidate.isOurCompany);
-  const qingbiaoRank = ourCompany
-    ? selectedQingbiaoScenario.results.find(
-        (result) => result.candidateId === ourCompany.id,
-      )?.finalRank
-    : undefined;
-
+  const ourCompany = scenario.top5.find(({ isOurCompany }) => isOurCompany);
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <Card size="sm" className="xl:col-span-2">
         <CardContent>
           <p className="text-xs text-muted-foreground">我方单位</p>
           <p className="mt-2 truncate text-base font-semibold">
-            {ourCompany?.companyName ?? "未设置"}
-          </p>
-        </CardContent>
-      </Card>
-      <Card size="sm">
-        <CardContent>
-          <p className="text-xs text-muted-foreground">当前清标抽取值</p>
-          <p className="mt-2 text-xl font-semibold">{selectedQingbiaoK2}%</p>
-        </CardContent>
-      </Card>
-      <Card size="sm">
-        <CardContent>
-          <p className="text-xs text-muted-foreground">清标排名</p>
-          <p className="mt-2 text-xl font-semibold">
-            {qingbiaoRank ? `第 ${qingbiaoRank} 名` : "—"}
+            {ourCompany?.companyName ?? "未设置我方单位"}
           </p>
         </CardContent>
       </Card>
@@ -213,16 +184,25 @@ function ResultSummaryCards({
           <Card key={finalistCount} size="sm">
             <CardContent>
               <p className="text-xs text-muted-foreground">
-                N={finalistCount}模拟中标率
+                N={finalistCount} 定标 K1 / 模拟中标率
               </p>
-              <p className="mt-2 text-xl font-semibold">
+              <p className="mt-2 font-semibold">
                 {group?.status === "available"
-                  ? formatPercentagePoints(
-                      group.simulationWinRate.simulationWinRate,
-                    )
+                  ? formatPercentageFraction(group.dingbiaoK1Fraction)
                   : group?.status === "unavailable"
                     ? "不可模拟"
                     : "—"}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {!ourCompany
+                  ? "未设置我方单位"
+                  : group?.status === "available"
+                    ? formatPercentageFraction(
+                        group.simulationWinRate.simulationWinRate,
+                      )
+                    : group?.status === "unavailable"
+                      ? "不可模拟"
+                      : "—"}
               </p>
             </CardContent>
           </Card>
@@ -234,11 +214,11 @@ function ResultSummaryCards({
 
 function ResultMatrix({
   calculation,
-  candidatesById,
+  namesById,
   onOpenDetail,
 }: {
   calculation: DingbiaoCalculationView;
-  candidatesById: ReadonlyMap<string, DingbiaoPageData["candidates"][number]>;
+  namesById: ReadonlyMap<string, string>;
   onOpenDetail: (selection: DetailSelection) => void;
 }) {
   return (
@@ -246,14 +226,14 @@ function ResultMatrix({
       <CardHeader className="border-b">
         <CardTitle>定标预测结果矩阵</CardTitle>
         <CardDescription>
-          点击任一可用场景查看 M 值、差额及完整排名。
+          每个 N 独立计算 K1；点击任一抽值查看 M、差额和完整排名。
         </CardDescription>
       </CardHeader>
       <CardContent className="overflow-x-auto px-0">
         <Table className="min-w-220">
           <TableHeader>
             <TableRow>
-              <TableHead className="pl-4">入围数量</TableHead>
+              <TableHead className="pl-4">入围数量 / 定标 K1</TableHead>
               <TableHead>抽值1</TableHead>
               <TableHead>抽值2</TableHead>
               <TableHead>抽值3</TableHead>
@@ -263,44 +243,56 @@ function ResultMatrix({
           <TableBody>
             {DINGBIAO_FINALIST_COUNTS.map((finalistCount) => {
               const group = findGroup(calculation, finalistCount);
+              const ourCompanyCandidateId =
+                group?.status === "available"
+                  ? group.simulationWinRate.ourCompanyCandidateId
+                  : null;
               return (
                 <TableRow key={finalistCount}>
-                  <TableCell className="pl-4 font-semibold">
-                    N={finalistCount}
+                  <TableCell className="pl-4">
+                    <span className="block font-semibold">N={finalistCount}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {group?.status === "available"
+                        ? `K1 ${formatPercentageFraction(group.dingbiaoK1Fraction)}`
+                        : "不可模拟"}
+                    </span>
                   </TableCell>
-                  {([1, 2, 3] as const).map((finalDrawSlot) => {
-                    const scenario = findScenario(group, finalDrawSlot);
-                    const winner = scenario
-                      ? candidatesById.get(scenario.winnerCandidateId)
+                  {DINGBIAO_FINAL_DRAW_INDEXES.map((finalDrawIndex) => {
+                    const scenario = findScenario(group, finalDrawIndex);
+                    const winnerName = scenario
+                      ? namesById.get(scenario.winnerCandidateId)
                       : undefined;
+                    const ourCompanyWon =
+                      scenario?.winnerCandidateId === ourCompanyCandidateId;
                     return (
-                      <TableCell key={finalDrawSlot}>
+                      <TableCell key={finalDrawIndex}>
                         {group?.status === "unavailable" ? (
                           <Badge variant="outline" className="border-amber-300 text-amber-800">
                             不可模拟
                           </Badge>
-                        ) : scenario && winner ? (
+                        ) : scenario && winnerName ? (
                           <Button
                             type="button"
                             variant="ghost"
                             className={cn(
                               "h-auto w-full justify-between gap-3 px-2 py-2 text-left whitespace-normal",
-                              winner.isOurCompany &&
+                              ourCompanyWon &&
                                 "bg-emerald-50 text-emerald-800 hover:bg-emerald-100",
                             )}
                             onClick={() =>
-                              onOpenDetail({ finalistCount, finalDrawSlot })
+                              onOpenDetail({ finalistCount, finalDrawIndex })
                             }
                           >
                             <span>
-                              <span className="block font-medium">
-                                {winner.companyName}
-                              </span>
+                              <span className="block font-medium">{winnerName}</span>
                               <span className="mt-1 block text-xs opacity-70">
-                                抽值 {formatStoredPercentage(scenario.finalDrawValue)}
+                                M {formatMoney(scenario.benchmarkPriceM)} · 抽值{" "}
+                                {formatPercentageFraction(
+                                  scenario.finalDrawValueFraction,
+                                )}
                               </span>
                             </span>
-                            {winner.isOurCompany ? (
+                            {ourCompanyWon ? (
                               <Badge className="bg-emerald-600">我方中标</Badge>
                             ) : (
                               <Eye className="size-4 shrink-0" />
@@ -313,11 +305,13 @@ function ResultMatrix({
                     );
                   })}
                   <TableCell className="pr-4 text-right font-semibold">
-                    {group?.status === "available"
-                      ? formatPercentagePoints(
-                          group.simulationWinRate.simulationWinRate,
-                        )
-                      : "不可模拟"}
+                    {!ourCompanyCandidateId
+                      ? "未设置我方单位"
+                      : group?.status === "available"
+                        ? formatPercentageFraction(
+                            group.simulationWinRate.simulationWinRate,
+                          )
+                        : "不可模拟"}
                   </TableCell>
                 </TableRow>
               );
@@ -331,12 +325,12 @@ function ResultMatrix({
 
 function ScenarioDetailDialog({
   scenario,
-  candidatesById,
+  namesById,
   open,
   onOpenChange,
 }: {
   scenario: DingbiaoSimulationScenarioResult | null;
-  candidatesById: ReadonlyMap<string, DingbiaoPageData["candidates"][number]>;
+  namesById: ReadonlyMap<string, string>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -346,11 +340,11 @@ function ScenarioDetailDialog({
         <DialogHeader>
           <DialogTitle>
             {scenario
-              ? `N=${scenario.finalistCount} · 定标抽值${scenario.finalDrawSlot}`
+              ? `N=${scenario.finalistCount} · 定标抽值${scenario.finalDrawIndex}`
               : "定标场景详情"}
           </DialogTitle>
           <DialogDescription>
-            展示本场景的入围单位、公式输入、M值、差额和预测排名。
+            结果使用保存时的清标排名、报价和净下浮率快照，可用于复核。
           </DialogDescription>
         </DialogHeader>
 
@@ -358,19 +352,21 @@ function ScenarioDetailDialog({
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">dingbiaoK1</p>
+                <p className="text-xs text-muted-foreground">定标 K1</p>
                 <p className="mt-1 font-semibold">
-                  {formatStoredPercentage(scenario.dingbiaoK1)}
+                  {formatPercentageFraction(scenario.dingbiaoK1Fraction)}
                 </p>
               </div>
               <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">finalDrawValue</p>
+                <p className="text-xs text-muted-foreground">
+                  定标抽值 {scenario.finalDrawIndex}
+                </p>
                 <p className="mt-1 font-semibold">
-                  {formatStoredPercentage(scenario.finalDrawValue)}
+                  {formatPercentageFraction(scenario.finalDrawValueFraction)}
                 </p>
               </div>
               <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">M</p>
+                <p className="text-xs text-muted-foreground">基准价 M</p>
                 <p className="mt-1 font-semibold tabular-nums">
                   {formatMoney(scenario.benchmarkPriceM)}
                 </p>
@@ -378,74 +374,76 @@ function ScenarioDetailDialog({
             </div>
 
             <div className="overflow-x-auto rounded-xl border">
-              <Table className="min-w-260">
+              <Table className="min-w-250">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="pl-4">入围单位</TableHead>
+                    <TableHead className="pl-4 text-center">定标排名</TableHead>
+                    <TableHead>单位</TableHead>
+                    <TableHead className="text-center">清标来源排名</TableHead>
                     <TableHead className="text-right">投标总价</TableHead>
-                    <TableHead className="text-right">净下浮率</TableHead>
-                    <TableHead className="text-right">dingbiaoK1</TableHead>
-                    <TableHead className="text-right">finalDrawValue</TableHead>
+                    <TableHead className="text-right">净下浮率快照</TableHead>
+                    <TableHead className="text-right">定标 K1</TableHead>
+                    <TableHead className="text-right">定标抽值</TableHead>
                     <TableHead className="text-right">M</TableHead>
-                    <TableHead className="text-right">与M差额</TableHead>
-                    <TableHead className="text-center">排名</TableHead>
-                    <TableHead className="pr-4 text-center">预测中标单位</TableHead>
+                    <TableHead className="text-right">与 M 差额</TableHead>
+                    <TableHead className="pr-4 text-center">预测结果</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {scenario.candidates.map((result) => {
-                    const candidate = candidatesById.get(result.candidateId);
-                    if (!candidate) {
-                      return null;
-                    }
-                    return (
-                      <TableRow
-                        key={result.candidateId}
-                        className={cn(
-                          result.isWinner && "bg-emerald-50",
-                          candidate.isOurCompany && !result.isWinner && "bg-primary/5",
+                  {scenario.candidates.map((result) => (
+                    <TableRow
+                      key={result.candidateId}
+                      className={cn(
+                        result.isWinner && "bg-emerald-50",
+                        result.isOurCompany && !result.isWinner && "bg-primary/5",
+                      )}
+                    >
+                      <TableCell className="pl-4 text-center font-semibold">
+                        {result.rank}
+                      </TableCell>
+                      <TableCell className="font-medium">
+                        <span className="flex items-center gap-2">
+                          {namesById.get(result.candidateId) ?? result.candidateId}
+                          {result.isOurCompany ? <Badge>我方</Badge> : null}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-center tabular-nums">
+                        {result.sourceQingbiaoRank}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMoney(result.bidPrice)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatPercentageFraction(
+                          result.netDiscountRateFraction,
                         )}
-                      >
-                        <TableCell className="pl-4 font-medium">
-                          <span className="flex items-center gap-2">
-                            {candidate.companyName}
-                            {candidate.isOurCompany ? <Badge>我方</Badge> : null}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatMoney(result.bidPrice)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatStoredPercentage(candidate.netDiscountRate)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatStoredPercentage(scenario.dingbiaoK1)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatStoredPercentage(scenario.finalDrawValue)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatMoney(scenario.benchmarkPriceM)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatMoney(result.differenceToM)}
-                        </TableCell>
-                        <TableCell className="text-center font-semibold tabular-nums">
-                          {result.rank}
-                        </TableCell>
-                        <TableCell className="pr-4 text-center">
-                          {result.isWinner ? (
-                            <Badge className="bg-emerald-600">
-                              <Trophy />
-                              预测中标
-                            </Badge>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatPercentageFraction(scenario.dingbiaoK1Fraction)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatPercentageFraction(
+                          scenario.finalDrawValueFraction,
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMoney(scenario.benchmarkPriceM)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMoney(result.differenceToM)}
+                      </TableCell>
+                      <TableCell className="pr-4 text-center">
+                        {result.isWinner ? (
+                          <Badge className="bg-emerald-600">
+                            <Trophy />
+                            预测中标
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
             </div>
@@ -460,8 +458,8 @@ export function DingbiaoManager({ initialData }: { initialData: DingbiaoPageData
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const calculationLock = useRef(false);
-  const [selectedQingbiaoK2, setSelectedQingbiaoK2] = useState<QingbiaoK2>(() =>
-    initialQingbiaoK2(initialData),
+  const [selectedSourceId, setSelectedSourceId] = useState(() =>
+    initialSourceScenarioId(initialData),
   );
   const [calculation, setCalculation] =
     useState<DingbiaoCalculationView | null>(initialData.latestCalculation);
@@ -469,50 +467,51 @@ export function DingbiaoManager({ initialData }: { initialData: DingbiaoPageData
   const [detailSelection, setDetailSelection] =
     useState<DetailSelection | null>(null);
 
-  const candidatesById = useMemo(
-    () => new Map(initialData.candidates.map((candidate) => [candidate.id, candidate])),
-    [initialData.candidates],
+  const namesById = useMemo(
+    () =>
+      new Map(
+        initialData.qingbiaoScenarios.flatMap((scenario) =>
+          scenario.top5.map((candidate) => [
+            candidate.candidateId,
+            candidate.companyName,
+          ] as const),
+        ),
+      ),
+    [initialData.qingbiaoScenarios],
   );
-  const selectedQingbiaoScenario = initialData.qingbiaoScenarios.find(
-    (scenario) => scenario.qingbiaoK2 === selectedQingbiaoK2,
+  const selectedScenario = initialData.qingbiaoScenarios.find(
+    ({ scenarioId }) => scenarioId === selectedSourceId,
   );
   const selectedCalculation =
-    calculation?.qingbiaoK2 === selectedQingbiaoK2 ? calculation : null;
-  const hasAvailableGroup = selectedQingbiaoScenario?.previewGroups.some(
+    calculation?.sourceQingbiaoScenarioId === selectedSourceId
+      ? calculation
+      : null;
+  const hasAvailableGroup = selectedScenario?.previewGroups.some(
     (group) => group.status === "available",
   );
-  const isStale =
-    selectedCalculation !== null &&
-    selectedCalculation.inputRevision !== initialData.currentInputRevision;
   const detailScenario = detailSelection
     ? findScenario(
         findGroup(selectedCalculation, detailSelection.finalistCount),
-        detailSelection.finalDrawSlot,
+        detailSelection.finalDrawIndex,
       ) ?? null
     : null;
 
-  function selectQingbiaoK2(qingbiaoK2: QingbiaoK2) {
-    setSelectedQingbiaoK2(qingbiaoK2);
+  function selectSource(sourceQingbiaoScenarioId: string) {
+    setSelectedSourceId(sourceQingbiaoScenarioId);
     setIssues([]);
     setDetailSelection(null);
   }
 
   function runCalculation() {
-    if (
-      !selectedQingbiaoScenario ||
-      !hasAvailableGroup ||
-      calculationLock.current ||
-      isPending
-    ) {
+    if (!selectedScenario || !hasAvailableGroup || calculationLock.current || isPending) {
       return;
     }
-
     setIssues([]);
     calculationLock.current = true;
     startTransition(async () => {
       try {
         const result = await calculateDingbiaoAction(initialData.projectId, {
-          qingbiaoK2: selectedQingbiaoK2,
+          sourceQingbiaoScenarioId: selectedScenario.scenarioId,
         });
         if (result.status === "success") {
           setCalculation(result.calculation);
@@ -532,7 +531,7 @@ export function DingbiaoManager({ initialData }: { initialData: DingbiaoPageData
     });
   }
 
-  if (!selectedQingbiaoScenario) {
+  if (!selectedScenario) {
     return (
       <ErrorState
         title="清标场景数据不完整"
@@ -551,7 +550,7 @@ export function DingbiaoManager({ initialData }: { initialData: DingbiaoPageData
       <PageHeader
         eyebrow="Dingbiao Forecast"
         title="定标预测"
-        description={`基于“${initialData.projectName}”已保存的清标排名，模拟三种入围数量和三个定标抽值。`}
+        description={`从“${initialData.projectName}”的 16 套清标场景中选择一个具体来源，生成最多 9 套定标结果。`}
         actions={
           selectedCalculation ? (
             <Badge variant="outline" className="gap-1.5">
@@ -562,54 +561,49 @@ export function DingbiaoManager({ initialData }: { initialData: DingbiaoPageData
         }
       />
 
-      <section className="space-y-4" aria-labelledby="qingbiao-k2-title">
+      <section className="space-y-4" aria-labelledby="source-scenario-title">
         <div>
-          <h2 id="qingbiao-k2-title" className="text-lg font-semibold">
-            选择清标抽取值
+          <h2 id="source-scenario-title" className="text-lg font-semibold">
+            最终定标单位范围
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            清标抽取值与定标抽值是两个不同参数；切换后先预览 Top5、Top4、Top3。
+            清标 K2 不能单独标识来源；请选择“推优剔除规则 + K2”对应的具体清标场景。
           </p>
         </div>
 
         <Card>
           <CardContent className="space-y-5">
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {QINGBIAO_K2_VALUES.map((qingbiaoK2) => {
-                const exists = initialData.qingbiaoScenarios.some(
-                  (scenario) => scenario.qingbiaoK2 === qingbiaoK2,
-                );
-                return (
-                  <Button
-                    key={qingbiaoK2}
-                    type="button"
-                    variant={
-                      selectedQingbiaoK2 === qingbiaoK2 ? "default" : "outline"
-                    }
-                    disabled={!exists || isPending}
-                    aria-pressed={selectedQingbiaoK2 === qingbiaoK2}
-                    onClick={() => selectQingbiaoK2(qingbiaoK2)}
-                  >
-                    {qingbiaoK2}%
-                  </Button>
-                );
-              })}
-            </div>
-            <QingbiaoPreview
-              scenario={selectedQingbiaoScenario}
-              candidatesById={candidatesById}
-            />
+            <Select
+              value={selectedSourceId}
+              onValueChange={selectSource}
+              disabled={isPending}
+            >
+              <SelectTrigger className="w-full sm:w-96" aria-label="选择清标来源场景">
+                <SelectValue placeholder="请选择清标场景" />
+              </SelectTrigger>
+              <SelectContent>
+                {initialData.qingbiaoScenarios.map((scenario) => (
+                  <SelectItem key={scenario.scenarioId} value={scenario.scenarioId}>
+                    规则{scenario.ruleIndex} · K2={scenario.qingbiaoK2Value}%
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <SourcePreview scenario={selectedScenario} />
+
             <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-2 text-sm text-muted-foreground">
                 {hasAvailableGroup ? (
                   <>
                     <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
-                    已读取清标抽取值 {selectedQingbiaoK2}% 的结果，可以执行定标预测。
+                    已锁定规则{selectedScenario.ruleIndex} / K2=
+                    {selectedScenario.qingbiaoK2Value}% 的有序结果。
                   </>
                 ) : (
                   <>
                     <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
-                    候选单位不足3家，当前场景不可模拟。
+                    候选单位不足 3 家，当前清标场景不可进入定标预测。
                   </>
                 )}
               </div>
@@ -627,10 +621,7 @@ export function DingbiaoManager({ initialData }: { initialData: DingbiaoPageData
       </section>
 
       {issues.length > 0 ? (
-        <div
-          className="rounded-xl border border-destructive/30 bg-destructive/5 p-4"
-          role="alert"
-        >
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4" role="alert">
           <p className="font-medium text-destructive">定标预测未完成</p>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-destructive">
             {issues.map((issue) => (
@@ -646,42 +637,33 @@ export function DingbiaoManager({ initialData }: { initialData: DingbiaoPageData
             预测结果
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            模拟中标率仅用于比较当前三个离散定标抽值场景，不代表统计学概率。
+            模拟中标率仅比较同一 N 下三个离散抽值，不代表统计学概率。
           </p>
         </div>
 
         <ResultSummaryCards
-          selectedQingbiaoK2={selectedQingbiaoK2}
-          selectedQingbiaoScenario={selectedQingbiaoScenario}
+          scenario={selectedScenario}
           calculation={selectedCalculation}
-          candidates={initialData.candidates}
         />
-
-        {isStale ? (
-          <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            项目参数、候选单位或清标结果已变化，以下为上一次预测，请重新执行。
-          </div>
-        ) : null}
 
         {selectedCalculation ? (
           <ResultMatrix
             calculation={selectedCalculation}
-            candidatesById={candidatesById}
+            namesById={namesById}
             onOpenDetail={setDetailSelection}
           />
         ) : (
           <EmptyState
             icon={Target}
-            title="尚未生成当前清标场景的定标预测"
-            description={`点击“开始定标预测”，系统将对清标抽取值 ${selectedQingbiaoK2}% 下的可用入围方案执行模拟。`}
+            title="尚未生成当前清标来源的定标预测"
+            description={`点击“开始定标预测”，系统将只对规则${selectedScenario.ruleIndex} / K2=${selectedScenario.qingbiaoK2Value}% 生成最多 9 套结果。`}
           />
         )}
       </section>
 
       <ScenarioDetailDialog
         scenario={detailScenario}
-        candidatesById={candidatesById}
+        namesById={namesById}
         open={detailSelection !== null && detailScenario !== null}
         onOpenChange={(open) => {
           if (!open) {

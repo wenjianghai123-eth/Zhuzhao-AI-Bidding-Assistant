@@ -124,19 +124,19 @@ describe("buildDecisionAnalysis", () => {
         finalistCount: 4,
         winCount: 2,
         simulationCount: 3,
-        simulationWinRate: "66.666666666666666667",
+        simulationWinRate: "0.66666666666666666667",
       },
       {
         status: "available",
         finalistCount: 3,
         winCount: 1,
         simulationCount: 3,
-        simulationWinRate: "33.333333333333333333",
+        simulationWinRate: "0.33333333333333333333",
       },
     ]);
     expect(result.analysis.bestDingbiaoScenario).toMatchObject({
       finalistCount: 4,
-      simulationWinRate: "66.666666666666666667",
+      simulationWinRate: "0.66666666666666666667",
     });
     expect(result.analysis.dingbiaoCompetitiveness[0]).toMatchObject({
       finalistCount: 5,

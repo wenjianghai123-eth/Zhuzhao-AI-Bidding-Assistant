@@ -62,7 +62,11 @@ export default async function DingbiaoPage({
     throw new Error("Failed to load dingbiao page data for an existing project");
   }
 
-  if (pageData.qingbiaoScenarios.length === 0) {
+  if (
+    pageData.qingbiaoCatalogStatus !== "current" ||
+    pageData.qingbiaoScenarios.length === 0
+  ) {
+    const isStale = pageData.qingbiaoCatalogStatus === "stale";
     return (
       <div className="space-y-6">
         <PageHeader
@@ -72,8 +76,16 @@ export default async function DingbiaoPage({
         />
         <EmptyState
           icon={Target}
-          title="请先完成清标测算后再进行定标预测。"
-          description="当前项目尚无与最新参数匹配的清标结果，完成清标测算后即可选择清标抽取值。"
+          title={
+            isStale
+              ? "当前清标结果已过期，请重新完成清标测算后再进行定标。"
+              : "请先完成清标测算后再进行定标预测。"
+          }
+          description={
+            isStale
+              ? "项目参数、候选单位或清标输入已经变化，旧 Top5 不会继续用于正式定标。"
+              : "当前项目尚无有效的 16 场景清标目录，完成清标测算后即可选择具体来源。"
+          }
           action={
             <Button asChild>
               <Link href={`/projects/${pageData.projectId}/qingbiao`}>

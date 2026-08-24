@@ -29,6 +29,21 @@ export interface AnalysisRepository {
 
 export const prismaAnalysisRepository: AnalysisRepository = {
   async findProjectSnapshot(projectId) {
+    const latestDingbiaoSource = await prisma.dingbiaoScenario.findFirst({
+      where: {
+        projectId,
+        version: CURRENT_DINGBIAO_VERSION,
+        sourceQingbiaoScenarioId: { not: null },
+        sourceQingbiaoScenario: {
+          isLegacy: true,
+          exclusionRule: { ruleIndex: 1 },
+        },
+      },
+      select: { sourceQingbiaoScenarioId: true },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+    });
+    const latestDingbiaoSourceId =
+      latestDingbiaoSource?.sourceQingbiaoScenarioId ?? null;
     const project = await prisma.project.findUnique({
       where: { id: projectId },
       select: {
@@ -45,7 +60,11 @@ export const prismaAnalysisRepository: AnalysisRepository = {
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },
         qingbiaoScenarios: {
-          where: { version: CURRENT_QINGBIAO_VERSION },
+          where: {
+            version: CURRENT_QINGBIAO_VERSION,
+            isLegacy: true,
+            exclusionRule: { ruleIndex: 1 },
+          },
           select: {
             qingbiaoK2: true,
             inputRevision: true,
@@ -61,13 +80,18 @@ export const prismaAnalysisRepository: AnalysisRepository = {
           orderBy: { qingbiaoK2: "asc" },
         },
         dingbiaoScenarios: {
-          where: { version: CURRENT_DINGBIAO_VERSION },
+          where: latestDingbiaoSourceId
+            ? {
+                version: CURRENT_DINGBIAO_VERSION,
+                sourceQingbiaoScenarioId: latestDingbiaoSourceId,
+              }
+            : { id: "__no_current_dingbiao_scenario__" },
           select: {
             finalistCount: true,
-            finalDrawSlot: true,
+            finalDrawIndex: true,
             finalDrawValue: true,
             inputRevision: true,
-            qingbiaoScenario: {
+            sourceQingbiaoScenario: {
               select: { inputRevision: true },
             },
             results: {
@@ -79,7 +103,7 @@ export const prismaAnalysisRepository: AnalysisRepository = {
               orderBy: [{ rank: "asc" }, { candidateId: "asc" }],
             },
           },
-          orderBy: [{ finalistCount: "desc" }, { finalDrawSlot: "asc" }],
+          orderBy: [{ finalistCount: "desc" }, { finalDrawIndex: "asc" }],
         },
       },
     });
@@ -114,7 +138,8 @@ export const prismaAnalysisRepository: AnalysisRepository = {
       project.dingbiaoScenarios.flatMap((scenario) => {
         if (
           !isDingbiaoFinalistCount(scenario.finalistCount) ||
-          !isFinalDrawSlot(scenario.finalDrawSlot)
+          scenario.finalDrawIndex === null ||
+          !isFinalDrawSlot(scenario.finalDrawIndex)
         ) {
           return [];
         }
@@ -126,7 +151,7 @@ export const prismaAnalysisRepository: AnalysisRepository = {
         return [
           {
             finalistCount: scenario.finalistCount,
-            finalDrawSlot: scenario.finalDrawSlot,
+            finalDrawSlot: scenario.finalDrawIndex,
             finalDrawValue: scenario.finalDrawValue.toString(),
             winnerCandidateId: winner.candidateId,
             candidates: scenario.results.map((result) => ({
@@ -155,7 +180,7 @@ export const prismaAnalysisRepository: AnalysisRepository = {
         project.dingbiaoScenarios.every(
           (scenario) =>
             scenario.inputRevision === project.dingbiaoInputRevision &&
-            scenario.qingbiaoScenario.inputRevision ===
+            scenario.sourceQingbiaoScenario?.inputRevision ===
               project.qingbiaoInputRevision,
         ),
     };

@@ -1,10 +1,16 @@
-import type { QingbiaoScenarioSelections } from "@/domain/qingbiao";
+import { calculateQingbiaoScenarioV2 } from "@/domain/qingbiao";
 import { getRecentPerformanceAverage } from "@/server/application/company-performance-service";
 import {
-  calculateAndSaveQingbiao,
+  ensureQingbiaoExclusionRules,
+  saveQingbiaoExclusionRule,
+} from "@/server/application/qingbiao-exclusion-rule-service";
+import {
+  calculateAllQingbiaoScenarios,
   getQingbiaoPageData,
+  getQingbiaoScenarioCatalog,
 } from "@/server/application/qingbiao-service";
 import { prismaQingbiaoRepository } from "@/server/repositories/qingbiao-repository";
+import { prismaQingbiaoExclusionRuleRepository } from "@/server/repositories/qingbiao-exclusion-rule-repository";
 
 const runtimeDependencies = {
   repository: prismaQingbiaoRepository,
@@ -12,19 +18,39 @@ const runtimeDependencies = {
     companyName: string,
     projectTypes: Parameters<typeof getRecentPerformanceAverage>[1],
   ) => getRecentPerformanceAverage(companyName, projectTypes),
+  scenarioCalculator: calculateQingbiaoScenarioV2,
 };
 
-export function getRuntimeQingbiaoPageData(projectId: string) {
+export async function getRuntimeQingbiaoPageData(projectId: string) {
+  await ensureQingbiaoExclusionRules(projectId, {
+    repository: prismaQingbiaoExclusionRuleRepository,
+  });
   return getQingbiaoPageData(projectId, runtimeDependencies);
 }
 
-export function calculateAndSaveRuntimeQingbiao(
+export async function calculateAllRuntimeQingbiaoScenarios(projectId: string) {
+  const ensured = await ensureQingbiaoExclusionRules(projectId, {
+    repository: prismaQingbiaoExclusionRuleRepository,
+  });
+  if (ensured.status === "project_not_found") {
+    return { status: "project_not_found" } as const;
+  }
+  return calculateAllQingbiaoScenarios(projectId, runtimeDependencies);
+}
+
+export function saveRuntimeQingbiaoExclusionRule(
   projectId: string,
-  scenarioSelections: QingbiaoScenarioSelections,
+  exclusionRuleId: string,
+  candidateIds: readonly string[],
 ) {
-  return calculateAndSaveQingbiao(
+  return saveQingbiaoExclusionRule(
     projectId,
-    scenarioSelections,
-    runtimeDependencies,
+    exclusionRuleId,
+    candidateIds,
+    { repository: prismaQingbiaoExclusionRuleRepository },
   );
+}
+
+export function getRuntimeQingbiaoScenarioCatalog(projectId: string) {
+  return getQingbiaoScenarioCatalog(projectId, runtimeDependencies);
 }

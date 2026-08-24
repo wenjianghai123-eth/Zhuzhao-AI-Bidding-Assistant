@@ -2,101 +2,57 @@
 
 ## 1. 范围
 
-本文档描述 MVP 阶段 Prisma + SQLite 数据模型。模型负责保存项目输入、公共履约记录、清标/定标场景及结果快照；本阶段不实现清标或定标算法。
+本文档描述 Prisma + SQLite 的当前数据模型。模型已经承载 4 个推优剔除规则、16 套独立清标场景，以及每套清标场景最多 9 套定标场景；新版清标与单来源定标流程已经实现，全局 144 场景分析尚未实现。
 
 数据库文件由 `DATABASE_URL` 指定，本地默认值为 `file:./dev.db`。数据库文件不提交到版本库。
 
 ## 2. ER 图
-
-`ProjectRuleProjectType` 和 `QingbiaoScenarioCandidate` 是为多选关系增加的显式关联实体。
 
 ```mermaid
 erDiagram
     Project ||--o| ProjectRule : "has rule"
     ProjectRule ||--o{ ProjectRuleProjectType : "supports types"
     Project ||--o{ ProjectCandidate : "has candidates"
-    Project ||--o{ QingbiaoScenario : "has qingbiao scenarios"
-    QingbiaoScenario ||--o{ QingbiaoScenarioCandidate : "selects references"
+    Project ||--o{ QingbiaoExclusionRule : "has 4 rule slots"
+    QingbiaoExclusionRule ||--o{ QingbiaoExclusionRuleCandidate : "excludes"
+    ProjectCandidate ||--o{ QingbiaoExclusionRuleCandidate : "is excluded by"
+    QingbiaoExclusionRule ||--o{ QingbiaoScenario : "owns K2 scenarios"
+    Project ||--o{ QingbiaoScenario : "has scenarios"
+    QingbiaoScenario ||--o{ QingbiaoScenarioCandidate : "legacy reference selections"
     ProjectCandidate ||--o{ QingbiaoScenarioCandidate : "is selected by"
-    QingbiaoScenario ||--o{ QingbiaoResult : "produces"
+    QingbiaoScenario ||--o{ QingbiaoResult : "produces ordered results"
     ProjectCandidate ||--o{ QingbiaoResult : "receives result"
-    Project ||--o{ DingbiaoScenario : "has dingbiao scenarios"
-    QingbiaoScenario ||--o{ DingbiaoScenario : "is source of"
-    DingbiaoScenario ||--o{ DingbiaoResult : "produces"
-    ProjectCandidate ||--o{ DingbiaoResult : "receives result"
+    QingbiaoScenario ||--o{ DingbiaoScenario : "is explicit source of"
+    Project ||--o{ DingbiaoScenario : "has simulations"
+    DingbiaoScenario ||--o{ DingbiaoResult : "produces finalist snapshots"
+    ProjectCandidate ||--o{ DingbiaoResult : "identifies candidate"
 
-    Project {
-        string id PK
-        string name
-        ProjectStatus status
-        int qingbiaoInputRevision
-        int dingbiaoInputRevision
-        datetime createdAt
-        datetime updatedAt
-    }
-
-    ProjectRule {
-        string projectId PK,FK
-        decimal maxBidPrice
-        decimal nonCompetitiveFee
-        decimal totalBidPriceScore
-        decimal rankDeduction
-        decimal finalDrawValue1
-        decimal finalDrawValue2
-        decimal finalDrawValue3
-        datetime createdAt
-        datetime updatedAt
-    }
-
-    ProjectRuleProjectType {
-        string projectId PK,FK
-        ProjectType projectType PK
-    }
-
-    ProjectCandidate {
+    QingbiaoExclusionRule {
         string id PK
         string projectId FK
-        string companyName
-        decimal bidPrice
-        decimal netDiscountRate
-        decimal trademarkScore
-        decimal technicalScore
-        decimal similarExperienceScore
-        decimal otherScore
-        boolean isOurCompany
+        int ruleIndex "1..4"
+        string label nullable
         datetime createdAt
         datetime updatedAt
     }
 
-    CompanyPerformance {
-        string id PK
-        string companyName
-        ProjectType projectType
-        string classificationLevel
-        int year
-        int quarter
-        decimal score
+    QingbiaoExclusionRuleCandidate {
+        string exclusionRuleId PK,FK
+        string candidateId PK,FK
         datetime createdAt
-        datetime updatedAt
     }
 
     QingbiaoScenario {
         string id PK
         string projectId FK
-        int k2Value
+        string exclusionRuleId FK nullable_for_legacy
+        int k2Value "0..3 identity"
         decimal referencePriceB
-        decimal qingbiaoK1
+        decimal qingbiaoK1 "fraction"
+        boolean isLegacy
         int version
         int inputRevision
         string ruleVersion
-        datetime createdAt
-        datetime updatedAt
-    }
-
-    QingbiaoScenarioCandidate {
-        string scenarioId PK,FK
-        string candidateId PK,FK
-        datetime createdAt
     }
 
     QingbiaoResult {
@@ -110,169 +66,206 @@ erDiagram
         decimal priceScore
         decimal totalScore
         int finalRank
-        datetime createdAt
     }
 
     DingbiaoScenario {
         string id PK
         string projectId FK
-        string qingbiaoScenarioId FK
-        int qingbiaoK2Value
-        int finalistCount
-        int finalDrawSlot
-        decimal finalDrawValue
-        decimal dingbiaoK1
+        string qingbiaoScenarioId FK "legacy"
+        string sourceQingbiaoScenarioId FK nullable_for_legacy
+        int qingbiaoK2Value "legacy snapshot"
+        int finalistCount "3,4,5"
+        int finalDrawSlot "legacy"
+        int finalDrawIndex "1..3, nullable_for_legacy"
+        decimal finalDrawValue "fraction"
+        decimal dingbiaoK1 "fraction"
         decimal benchmarkPriceM
-        int version
         int inputRevision
         string ruleVersion
-        datetime createdAt
-        datetime updatedAt
     }
 
     DingbiaoResult {
         string id PK
         string scenarioId FK
         string candidateId FK
+        int sourceQingbiaoRank nullable_for_legacy
         decimal bidPrice
+        decimal netDiscountRateSnapshot nullable_for_legacy
         decimal differenceToM
         int rank
         boolean isWinner
-        datetime createdAt
     }
 ```
 
-`CompanyPerformance` 是跨项目公共数据，目前按 `companyName + projectType` 关联业务。后续引入独立 Company 主数据时，应增加 `companyId` 并迁移名称关联，避免公司更名导致匹配失败。
+`ProjectRuleProjectType`、`QingbiaoExclusionRuleCandidate` 和 `QingbiaoScenarioCandidate` 均为显式多选关联。`CompanyPerformance` 仍是跨项目公共数据，暂按 `companyName + projectType` 匹配。
 
-## 3. 枚举
+## 3. 推优剔除规则
 
-### ProjectStatus
-
-- `DRAFT`
-- `CALCULATED`
-- `COMPLETED`
-
-### ProjectType
-
-- `CURTAIN_WALL`
-- `DECORATION`
-- `GENERAL_CONTRACT`
-- `LABORATORY`
-
-SQLite 将 Prisma 枚举保存为文本，因此初始迁移同时建立数据库 `CHECK` 约束。迁移到 PostgreSQL 时可以改用原生 enum 或受控文本类型。
-
-## 4. 多选项目类型
-
-SQLite 不支持 Prisma scalar list。项目类型使用显式关联表 `ProjectRuleProjectType`：
+`QingbiaoExclusionRule` 是项目内的结构化规则槽位。当前每个项目固定确保以下四条：
 
 ```text
-ProjectRule 1 ─── N ProjectRuleProjectType
+ruleIndex = 1 / 2 / 3 / 4
 ```
 
-复合主键 `(projectId, projectType)` 防止同一项目规则重复选择专业，并方便以后在 PostgreSQL 中保持规范化结构。
+- `ruleIndex` 仅表达顺序，不硬编码 Excel 尚未确认的具体业务含义。
+- `(projectId, ruleIndex)` 唯一，数据库 `CHECK` 限制只能为 1 至 4。
+- 新建项目自动创建四条；`ensureQingbiaoExclusionRules(projectId)` 可对历史项目幂等补齐，多次调用不会产生第五条。
+- `label` 可空，当前不把“推优规则1”等展示文字作为业务枚举或关系键。
 
-## 5. 清标参考单位关系
+## 4. 被剔除单位
 
-`QingbiaoScenarioCandidate` 保存每个清标场景选择了哪些候选单位用于参考数据：
+`QingbiaoExclusionRuleCandidate` 显式保存：
 
 ```text
-QingbiaoScenario N ─── M ProjectCandidate
+exclusionRuleId + candidateId
 ```
 
-复合主键 `(scenarioId, candidateId)` 防止同一候选单位在一个场景中被重复选择。
+复合主键防止同一规则重复剔除同一候选单位；不同规则可以剔除同一候选单位。repository 写入时验证候选单位与规则属于同一项目。名称变更不会破坏关系。
 
-应用服务在写入时还必须验证候选单位和场景属于同一个 Project。该跨聚合约束不放入 UI，也不通过名称匹配实现。
+旧 `QingbiaoScenarioCandidate` 暂时保留，只服务于当前旧 4 场景页面的“选择参考单位”兼容语义，不能用于表示新版剔除单位。
 
-## 6. 唯一约束与索引
+## 5. 清标场景身份
 
-主要唯一约束：
+新版清标场景的唯一身份是：
+
+```text
+QingbiaoScenarioIdentity = exclusionRuleId + qingbiaoK2Value
+```
+
+数据库唯一约束为：
+
+```prisma
+@@unique([exclusionRuleId, qingbiaoK2])
+```
+
+`qingbiaoK2Value` 仍为 `0 | 1 | 2 | 3` 场景编号，不持久化可推导的 rate。公式使用时必须通过 `qingbiaoK2ValueToRate()` 转换为 `0 | 0.01 | 0.02 | 0.03`。
+
+因此一个项目可同时保存：
+
+```text
+4 QingbiaoExclusionRule × 4 K2 = 16 QingbiaoScenario
+```
+
+`QingbiaoResult` 继续属于具体 `scenarioId`。Top5 通过 `finalRank <= 5` 推导，不创建重复 Top5 表。
+
+## 6. “全场景入围单位”
+
+“全场景入围单位”不是把公司名称做去重并集，而是保留场景边界和顺序的 16 组结果：
+
+```text
+Scenario A -> ordered rank 1..5
+Scenario B -> ordered rank 1..5
+...
+Scenario P -> ordered rank 1..5
+```
+
+同一候选单位出现在多个场景时，每次出现都属于不同的 `scenarioId + finalRank` 事实。定标来源必须选择 `qingbiaoScenarioId`，不能只选择 K2。
+
+## 7. 定标场景身份
+
+所有新定标写入使用：
+
+```text
+DingbiaoScenarioIdentity =
+sourceQingbiaoScenarioId + finalistCount + finalDrawIndex
+```
+
+其中：
+
+- `sourceQingbiaoScenarioId` 精确追溯到一套清标结果；
+- `finalistCount` 为 `5 | 4 | 3`；
+- `finalDrawIndex` 为 `1 | 2 | 3`，表示配置槽位；
+- `finalDrawValue` 保存 fraction 数值。即使 index 1 和 index 2 的值都为 `0.01`，仍是两个合法场景。
+
+数据库唯一约束不使用 `finalDrawValue`：
+
+```prisma
+@@unique([sourceQingbiaoScenarioId, finalistCount, finalDrawIndex])
+```
+
+因此每套清标场景可保存 `3 × 3 = 9` 套定标场景，模型总容量自然达到 `16 × 9 = 144`；当前应用不会自动计算 144 套。
+
+## 8. 定标入围快照
+
+`DingbiaoResult` 保存定标时的：
+
+- `candidateId`；
+- `sourceQingbiaoRank`；
+- `bidPrice`；
+- `netDiscountRateSnapshot`；
+- 与 M 的差额、定标排名和是否中标。
+
+新 repository 写入会从经过 revision 校验的来源清标场景和候选数据复制这些快照。迁移前旧结果允许两个新增快照字段为 null，不伪造当时数据。
+
+## 9. 兼容与历史数据
+
+迁移采用 staged nullable relation：
+
+- 迁移前 `QingbiaoScenario` 保持 `exclusionRuleId = null` 并设置 `isLegacy = true`，因为无法推断它属于哪种新版规则。
+- 迁移前 `DingbiaoScenario` 保留原 `qingbiaoScenarioId` / `finalDrawSlot`，新增来源和 index 保持 null。
+- 新写入必须同时设置明确的 `exclusionRuleId`、`sourceQingbiaoScenarioId` 和 `finalDrawIndex`。
+- 旧 4 场景页面临时使用 `ruleIndex=1 + isLegacy=true`，它只是兼容槽位，不代表新版规则1的正式含义。
+- migration 为 nullable legacy 行保留部分唯一索引，既不删除旧行，也不把旧行冒充完整 16 场景。
+
+当前 `dev.db` 迁移前没有清标/定标结果；迁移后已有项目获得四个空规则槽位，外键检查无异常。
+
+## 10. 主要约束与索引
 
 | 模型 | 约束 | 目的 |
-|---|---|---|
-| ProjectRule | `projectId` 主键 | 一个项目最多一套规则 |
-| ProjectRuleProjectType | `(projectId, projectType)` | 项目专业不重复 |
-| ProjectCandidate | `(projectId, companyName)` | 项目内单位不重复 |
-| CompanyPerformance | `(companyName, projectType, year, quarter)` | 同一季度履约记录唯一 |
-| QingbiaoScenario | `(projectId, k2Value, version)` | 场景版本唯一 |
-| QingbiaoScenarioCandidate | `(scenarioId, candidateId)` | 场景选择不重复 |
-| QingbiaoResult | `(scenarioId, candidateId)` | 单位在场景中只有一条结果 |
-| DingbiaoScenario | `(projectId, qingbiaoK2Value, finalistCount, finalDrawSlot, version)` | 抽值1/2/3在定标情景版本内唯一，即使抽值数值相同也可独立保存 |
-| DingbiaoResult | `(scenarioId, candidateId)` | 单位在定标情景中只有一条结果 |
+| --- | --- | --- |
+| `QingbiaoExclusionRule` | `(projectId, ruleIndex)` | 项目内四个槽位唯一 |
+| `QingbiaoExclusionRuleCandidate` | `(exclusionRuleId, candidateId)` | 同一规则不重复剔除 |
+| `QingbiaoScenario` | `(exclusionRuleId, k2Value)` | 16 场景身份 |
+| `QingbiaoResult` | `(scenarioId, candidateId)` | 单位在场景中结果唯一 |
+| `DingbiaoScenario` | `(sourceQingbiaoScenarioId, finalistCount, finalDrawIndex)` | 来源、N、抽值槽位唯一 |
+| `DingbiaoResult` | `(scenarioId, candidateId)` | 单位在定标场景中结果唯一 |
 
-初始迁移包含两个部分唯一索引：
+迁移 SQL 继续维护 Prisma schema 无法表达的部分唯一索引：每项目最多一个我方单位、每定标场景最多一个 winner，以及 staged legacy 行的旧身份约束。
 
-- `ProjectCandidate_one_our_company_per_project`：一个 Project 最多一个 `isOurCompany=true`。
-- `DingbiaoResult_one_winner_per_scenario`：一个确定的定标场景最多一个 `isWinner=true`。
+## 11. Decimal 与版本策略
 
-这类部分索引暂时不能完整表达在 Prisma schema 中，因此保存在 migration SQL，并需要在 PostgreSQL 迁移时用对应语法重建。
-
-查询索引覆盖：
-
-- 项目状态和创建时间。
-- 项目候选单位及公司名称。
-- 公司、专业、年度和季度履约查询。
-- 清标/定标场景按项目和创建时间查询。
-- 清标最终排名、报价排名及定标排名。
-
-## 7. 数据检查约束
-
-初始 SQLite migration 使用 `CHECK` 约束保护：
-
-- ProjectStatus 和 ProjectType 枚举值。
-- `k2Value`、`qingbiaoK2Value` 只能为 0、1、2、3。
-- `finalistCount` 只能为 3、4、5。
-- `quarter` 只能为 1、2、3、4。
-- 金额、得分、差额和排名的基础非负/正数要求。
-- 净下浮率当前限定为 0 至 1 的小数比例。
-- 不可竞争费非负且小于最高投标限价。
-
-服务端仍必须执行同样的业务校验，数据库约束是最后一道保护，不替代应用错误提示。
-
-## 8. Decimal 策略
-
-所有金额、百分比、得分和计算中间值使用 Prisma `Decimal`，不使用 Prisma `Float`。
-
-规则：
-
-- seed 和 API 边界使用十进制字符串，例如 `"8600.00"`。
-- 比例按小数保存，例如 1%保存为 `"0.01"`。
-- React 和 JSON DTO 不接收数据库 Decimal 实例，统一转换为十进制字符串。
-- 后续 domain 计算使用独立高精度十进制类型，不使用 JavaScript `number` 执行业务公式。
+- 所有金额、比例、得分使用 Prisma `Decimal`，repository DTO 输出 canonical decimal string。
+- 净下浮率、清标 K1、定标 K1、定标抽值和模拟比例内部使用 fraction。
+- `qingbiaoK2Value`、`ruleIndex`、`finalistCount`、`finalDrawIndex` 是离散 identity，不是比例。
+- 场景继续保存 `inputRevision`、`ruleVersion` 和时间戳；下游读取必须验证来源 revision。
 - 排名使用未舍入值，展示层才格式化。
 
-SQLite 的类型约束弱于 PostgreSQL，因此包含 Decimal 往返验证。迁移 PostgreSQL 时应根据业务最大金额和精度增加明确的 `Decimal(precision, scale)` 原生类型。
+## 12. Step 5 实际持久化契约（2026-08-24）
 
-## 9. 版本与结果追溯
+新版清标 Application 已正式使用现有模型保存 16 场景：
 
-场景额外保存：
-
-- `version`
-- `inputRevision`
-- `ruleVersion`
-
-它们用于把结果绑定到确定的输入和规则版本。上游数据变化时，旧结果可以保留用于报告追溯，但不能继续作为有效下游输入。
-
-`DingbiaoScenario.qingbiaoScenarioId` 指向实际使用的清标场景版本，而 `qingbiaoK2Value`保留为结果快照字段。
-
-## 10. Seed 数据
-
-`prisma/seed.ts` 是幂等 seed，包含：
-
-- 1个测试项目：`project-001`。
-- 1套项目规则及2个项目类型。
-- 6个候选单位，其中1个标记为我方单位。
-- 20条季度履约记录，覆盖幕墙、装修、总包和实验室专业。
-
-seed 不创建清标或定标结果，避免在算法未确认时写入伪造计算数据。
-
-## 11. 常用命令
-
-```bash
-npm run db:generate
-npm run db:migrate
-npm run db:seed
-npm run db:verify
-npm run db:studio
+```text
+Project
+  -> QingbiaoExclusionRule × 4
+     -> QingbiaoExclusionRuleCandidate × 0..n
+     -> QingbiaoScenario × K2(0,1,2,3)
+        -> QingbiaoResult × 全部排名候选
 ```
 
-迁移文件位于 `prisma/migrations`，已经应用的 migration 不得修改。
+- 剔除关系保存稳定 `candidateId`，不保存公司名称作为关联。
+- 同一规则允许 0 个剔除单位；禁止剔除当前项目全部候选单位。
+- 规则关联替换、输入修订递增在同一事务中完成，未变化的集合不递增修订号。
+- 一个成功批次必须恰有 4 条规则、每条恰有 4 个 K2，共 16 个唯一身份。
+- 每个场景的 `QingbiaoResult` 必须覆盖当前项目全部候选单位，因为当前排名策略为 `ALL_CANDIDATES`。
+- `qingbiaoK1` 和候选 `netDiscountRate` 均保存 fraction；`qingbiaoK2` 的 `0..3` 是受控 identity，由 Domain 转换为 `0..0.03`。
+- Top5 不重复落表，由每个场景中 `finalRank <= 5` 的有序结果派生。
+
+当前 schema 没有独立 calculation batch 表。事务完整性通过 `saveCalculationV2()` 的整批前置校验和单事务 upsert/replace 保证；场景唯一键保证重算复用身份。所有 16 条记录保存同一 `inputRevision` 与 `qingbiao-20260820-v2`，查询只有在完整读到同版本 16 条时才返回新版计算快照。
+
+旧 `QingbiaoScenarioCandidate`、nullable 关联和 `isLegacy` 字段继续保留，不作为新版剔除关系或新版页面查询依据。为让未升级的定标/analysis 暂时工作，规则 1 的四个 V2 场景仍写 `isLegacy=true`；规则 2–4 写 `false`。
+
+“全场景入围单位”的程序结构是 16 个目录项，每项为 `scenarioId + exclusionRuleId + ruleIndex + qingbiaoK2Value + ordered Top5(finalRank)`；不能压平成公司名称并集。
+
+## 13. 常用命令
+
+```bash
+pnpm db:generate
+pnpm db:migrate
+pnpm db:deploy
+pnpm db:seed
+pnpm db:verify
+pnpm exec prisma validate
+pnpm exec prisma migrate status
+```
+
+迁移文件位于 `prisma/migrations`；已经应用的 migration 不得修改，不得用 `migrate reset` 代替迁移设计。

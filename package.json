@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:acceptance": "vitest run src/server/integration/mvp-acceptance.test.ts",
+    "audit:percentages": "tsx scripts/audit-percentages.ts",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:prepare": "tsx scripts/ensure-sqlite.ts",

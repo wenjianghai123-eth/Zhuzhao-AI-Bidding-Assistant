@@ -52,7 +52,8 @@ import {
   importErrorResponseSchema,
   previewExcelImportResponseSchema,
 } from "@/features/imports/excel-import-response-schema";
-import { formatMoney, formatScore, formatStoredPercentage } from "@/lib/formatters";
+import { formatMoney, formatScore } from "@/lib/formatters";
+import { formatPercentageFraction } from "@/lib/percentage";
 import { cn } from "@/lib/utils";
 
 const workflowSteps = [
@@ -254,9 +255,9 @@ function ProjectPreview({ preview }: { preview: ExcelImportPreviewView }) {
     ["项目类型", project.projectTypes.map((type) => projectTypeLabels[type]).join("、")],
     ["总投标报价分值", project.totalBidPriceScore],
     ["排名递减扣分值", project.rankDeduction],
-    ["定标抽值1", formatStoredPercentage(project.finalDrawValue1)],
-    ["定标抽值2", formatStoredPercentage(project.finalDrawValue2)],
-    ["定标抽值3", formatStoredPercentage(project.finalDrawValue3)],
+    ["定标抽值1", formatPercentageFraction(project.finalDrawValue1)],
+    ["定标抽值2", formatPercentageFraction(project.finalDrawValue2)],
+    ["定标抽值3", formatPercentageFraction(project.finalDrawValue3)],
   ];
   return (
     <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -300,7 +301,7 @@ function CandidatePreview({ preview }: { preview: ExcelImportPreviewView }) {
                 {formatMoney(candidate.bidPrice)}
               </TableCell>
               <TableCell className="text-right tabular-nums">
-                {formatStoredPercentage(candidate.netDiscountRate)}
+                {formatPercentageFraction(candidate.netDiscountRate)}
               </TableCell>
               <TableCell className="text-right">{formatScore(candidate.trademarkScore)}</TableCell>
               <TableCell className="text-right">{formatScore(candidate.technicalScore)}</TableCell>

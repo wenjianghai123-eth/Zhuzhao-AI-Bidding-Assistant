@@ -10,9 +10,9 @@
 
 1. 新版清标不再是只有 `qingbiaoK2 = 0% / 1% / 2% / 3%` 的 4 个场景，而是 **4 种推优单位剔除规则 × 4 种清标 K2 = 16 个场景**。
 2. 推优单位选择的目的，是先按每种剔除规则生成一个清标 K1；K2 再与该 K1 组合计算参考报价 B。当前系统把候选单位选择直接挂在 K2 上，并把所选单位投标报价平均值当作 B，计算次序和选择语义均不符合新版原型。
-3. 定标不能只用 `qingbiaoK2` 定位来源，必须使用 `exclusionRule + qingbiaoK2`，更稳妥的方式是直接使用唯一 `qingbiaoScenarioId`。
+3. 定标不能只用 `qingbiaoK2` 定位来源；Step 6 已正式使用唯一 `sourceQingbiaoScenarioId`。
 4. 比例内部必须统一为 decimal fraction：`10% = 0.10`、`1% = 0.01`。当前表单和导入多数已按 fraction 保存，但清标 K1、清标 K2、定标 domain、部分 UI formatter 和旧测试仍混用 percentage point。
-5. 新版 Excel 的 N=5 M 公式与 N=4/N=3 文本公式互相冲突。该冲突必须在编码前由业务确认；`calculateFinalBenchmarkPrice()` 必须继续是 M 值唯一公式入口。
+5. 新版 Excel 的 N=5 M 公式与 N=4/N=3 文本曾互相冲突；Step 6 已按统一净下浮率语义把 N=4/N=3 旧文字认定为模板复制错误，并保持 `calculateFinalBenchmarkPrice()` 为唯一 M 入口。
 6. 最新 Excel 是文字方案原型：四个 Sheet 中没有可执行公式、数值样例或数据验证规则，单元格内容主要是字段说明和占位文本。因此编码前必须补充经业务签署的黄金数值夹具。
 
 本文中的规则状态分为：
@@ -144,7 +144,7 @@ M = (K1 + 定标抽值) / 100
     + 不可竞争费
 ```
 
-两者业务方向相反，属于 P0 冲突。本步骤不选择任何一方，也不修改现有实现。
+两者业务方向相反。Step 6 已按统一净下浮率语义解决该 P0：N=5/N=4/N=3 均采用 `1-K1-draw`，N=4/N=3 的旧加法文字视为模板复制错误。
 
 ## 3. 参数设置 → 履约 → 清标 → 定标完整流程
 
@@ -277,7 +277,7 @@ Top5        = candidates ordered by finalRank 1..5
    ```
 
 4. 每个 N 分别组合 3 个 `finalDrawValue`，形成 9 个定标模拟场景。
-5. M 只能通过 `calculateFinalBenchmarkPrice()` 计算；正式公式等待 P0 确认。
+5. M 只能通过 `calculateFinalBenchmarkPrice()` 计算，正式统一为 `(1-dingbiaoK1Fraction-finalDrawValueFraction)×(H-C)+C`。
 6. 每个场景计算 `abs(bidPrice - M)`，差额最小者为预测中标单位；Excel 明确差额并列时低报价优先。
 7. 每个 N 的模拟中标率是我方在 3 个离散抽值中预测中标次数除以 3，不是统计学真实概率。
 
@@ -324,19 +324,19 @@ flowchart TD
 | 清标总分 | 履约 + 同类业绩 + 其他 + 报价 | 已按此实现 | 一致；商标优、技术优未被擅自加入 |
 | 履约 | 最近 12 季度；多专业先分别平均再平均；权重未定 | 等权临时规则，缺失专业阻断计算 | 基本一致，但仍需确认权重和缺失策略 |
 | 清标 Top5 | 每个 16 场景独立有序 Top5 | 每个 4 场景独立排名 | 排名算法可复用，场景输入和数量不兼容 |
-| 定标来源 | 具体 `exclusionRule + K2` 或 `scenarioId` | action/service 只接收 `qingbiaoK2` | 同 K2 的 4 个来源无法区分 |
+| 定标来源 | 具体 `exclusionRule + K2` 或 `scenarioId` | Step 6 action/service 已接收 `sourceQingbiaoScenarioId` | 已对齐；同 K2 的 4 个来源可区分 |
 | N=5/4/3 | 从选中场景的有序 Top5 取前缀并各算 K1 | 已按 `finalRank` 取 Top N 并各算平均 | Top N 逻辑基本一致 |
-| 定标 K1 单位 | fraction | 运行时从数据库 fraction 求平均，但旧 fixtures 使用百分点 | domain 契约未统一 |
-| M | 新 Excel N=5 用补数公式，N=4/3 仍是旧加法公式 | `(K1 + draw) / 100 × ... + fee` | 已知 P0；生产 fraction 又被除以 100 |
-| 保存策略 | 来源场景身份必须保留；全局分析可能需要多来源 | 每次保存先删除项目全部定标场景 | 只能保留最近一次来源，无法跨 16 个来源分析 |
+| 定标 K1 单位 | fraction | Step 6 对每个 Top N 直接求 fraction 算术平均 | 已对齐；不 round、不 unique |
+| M | 三个 N 统一使用补数公式 | Step 6 已实现 `(1-K1-draw)×...+fee` | 已按统一净下浮率语义解决 |
+| 保存策略 | 来源场景身份必须保留；全局分析可能需要多来源 | Step 6 只替换同一 source，其他 source 保留 | 已具备多来源持久化基础；全量聚合留给 Step 7 |
 | 清标分析 | 16 个场景 | domain 固定循环 4 个 K2，Map 也以 K2 为键 | 同 K2 场景会覆盖，完整性判断错误 |
 | 全局分析 | 至少需要推优规则、K2、N、定标抽值的来源维度 | analysis 类型没有清标 scenarioId/推优规则维度 | 无法归因或比较新版场景 |
 | Excel 导入 | 最新文件当前是业务原型 | 能识别参数/候选/履约字段，明确忽略清标/定标结果 | 对“导入实际业务数据”可继续使用，但不能导入 4 组剔除选择或 16 场景 |
 | 回归测试 | 需要新版数值黄金夹具 | 黄金 fixture 来自旧文字公式，且明确刻画 fraction mismatch | 不能作为新版公式签署证据 |
 
-## 6. percentage fraction / percentage point 混用审计
+## 6. percentage fraction / percentage point 统一状态
 
-### 6.1 统一目标
+### 6.1 已落地契约（2026-08-24）
 
 内部数据库和 domain 的比例统一使用 decimal fraction：
 
@@ -352,82 +352,69 @@ flowchart TD
 stored "0.1038" <-> UI input "10.38" <-> display "10.38%"
 ```
 
-模拟中标率等“统计结果”当前 domain 返回 `0..100` 的百分点值，应与业务 rate 类型分开命名和建模，不能因为都显示 `%` 就共用同一语义类型。
+模拟中标率等统计比例也已统一为 `0..1` fraction；只有 UI/报告边界转换为百分点。唯一例外是用于场景 identity 的 `qingbiaoK2Value = 0|1|2|3`，其进入公式前必须通过 `qingbiaoK2ValueToRate()` 显式转换。
 
-### 6.2 当前字段逐项状态
+### 6.2 当前字段逐项状态（P0 percentage 修复后）
 
 | 字段 | 当前保存/计算 | 当前边界行为 | 问题与目标 |
 | --- | --- | --- | --- |
-| `ProjectCandidate.netDiscountRate` | DB 保存 fraction | 新增/编辑表单正确执行 `/100` 与 `×100`；Excel import 也保存 fraction | 候选列表错误使用 `formatPercentagePoints()`，`0.1038` 显示为 `0.10%`；应使用 stored-fraction formatter |
-| `ProjectRule.finalDrawValue1/2/3` | DB 保存 fraction | 设置表单和 import 正确转换；定标 UI 用 `formatStoredPercentage()` | 定标 domain 把 fraction 当百分点并再次 `/100` |
-| `QingbiaoScenario.qingbiaoK2` | Int `0/1/2/3`，语义为百分点标签 | UI 直接附加 `%` | 目标若全面统一，应持久化 `qingbiaoK2Rate=0/0.01/0.02/0.03`，或使用受控 code 并只在映射边界生成 fraction |
-| `QingbiaoScenario.qingbiaoK1` | 当前 domain 产出 `0..100` 百分点 | 清标 UI 用 `formatPercentagePoints()` | 新版 K1 应保存 fraction；旧结果不能无版本地按新单位解释 |
-| `DingbiaoScenario.dingbiaoK1` | 生产路径对候选 fraction 求平均，因而是 fraction | UI 用 `formatStoredPercentage()` | M 公式却按百分点处理，形成已知错位 |
-| `DingbiaoScenario.finalDrawValue` | 从 ProjectRule 复制 fraction | UI 用 `formatStoredPercentage()` | M 公式再次 `/100`，形成已知错位 |
-| `simulationWinRate` | domain 返回百分点 `0..100` | UI 用 `formatPercentagePoints()` | 当前组合是自洽的，但应显式命名为 percentage points 或改为统一 ratio 后在 UI 转换 |
+| `ProjectCandidate.netDiscountRate` | DB/domain 为 fraction | 表单 `10.38 <-> 0.1038`；列表统一使用 fraction formatter | 已修复 `0.1038 -> 0.10%`，现显示 `10.38%` |
+| `ProjectRule.finalDrawValue1/2/3` | DB/domain 为 fraction | 设置表单和 Excel import 在边界转换 | 已统一 |
+| `QingbiaoScenario.qingbiaoK2` | Int `0/1/2/3`，仅为受控场景 identity | UI 显示场景标签；`qingbiaoK2ValueToRate()` 产生 fraction | 当前旧算法尚未使用 K2 rate；16 场景升级时必须复用唯一转换入口 |
+| `QingbiaoScenario.qingbiaoK1` | domain 和新保存结果为 fraction | 清标 UI 使用 fraction formatter | 已修复 `20` 与 `0.2` 混用；历史外部数据库仍需先审计 |
+| `DingbiaoScenario.dingbiaoK1` | DB/domain 为 fraction | 定标 UI 使用 fraction formatter | 已移除 M 中重复 `/100` |
+| `DingbiaoScenario.finalDrawValue` | DB/domain 为 fraction | 定标 UI 使用 fraction formatter | 已移除 M 中重复 `/100` |
+| `simulationWinRate` | domain 返回 `0..1` fraction | UI/analysis 展示边界使用 fraction formatter | 已从百分点输出统一为 fraction |
 
-### 6.3 已有证据
+### 6.3 修复与验证证据
 
-- `candidate-form-schema.ts` 将 UI 的 `10.38` 除以 100 后保存为 `0.1038`，编辑时再乘 100，表单边界正确。
-- `project-settings-form-schema.ts` 对 3 个定标抽值执行相同转换，边界正确。
-- `excel-import-parser.ts` 对 Excel 百分比格式单元格保留其 raw fraction；对文本 `10%` 或普通数字 `10` 转为 `0.10`，方向正确。
-- `candidates-manager.tsx` 对 `netDiscountRate` 使用 `formatPercentagePoints()`，正是 `0.1038 -> 0.10%` 的已知显示错误。
-- `dingbiao/calculator.ts` 的 `calculateDingbiaoK1()` 直接平均数据库 fraction 是正确方向，但 `calculateFinalBenchmarkPrice()` 随后执行 `(K1 + draw) / 100`，把 fraction 当作百分点。
-- `excel-web-consistency.test.ts` 中的测试 **“characterizes the pending stored-fraction mismatch without changing business code”** 已明确证明：旧百分点评价夹具能匹配旧公式，而真实 stored fraction 会产生约 `107` 万元的异常 M，并改变预测中标单位。
+- `src/lib/percentage.ts` 是百分点输入、fraction、百分比展示之间的统一转换入口；所有转换使用 `decimal.js`。
+- 候选和项目设置表单复用统一 parser/converter，`0.1038 -> UI input 10.38 -> DB 0.1038` 可精确 round trip。
+- Excel parser 对百分比格式单元格保持 raw fraction，对固定百分点字段仅在明确字段边界转换，不使用 `>1` 猜测。
+- `calculateQingbiaoK1()` 返回 fraction；Step 6 的 `calculateFinalBenchmarkPrice()` 直接使用 `1-dingbiaoK1Fraction-finalDrawValueFraction`，不做二次 `/100`。
+- regression fixture 和测试已删除“记录已知 mismatch”的双单位分支，只接受 stored fraction 并继续匹配原业务方向下的 M 与排名结果。
+- `pnpm audit:percentages` 只读检查本地数据库。当前 `dev.db` 的 6 个 `netDiscountRate` 和 3 个 `finalDrawValue` 均为 expected fraction；数据库当前没有清标/定标历史结果行，因此没有自动迁移任何数据。
 
-### 6.4 formatter 风险
+### 6.4 剩余防误用约束
 
-当前同时存在：
+旧的 `formatPercentagePoints()` / `formatStoredPercentage()` 双 formatter 已移除，真正比例只允许使用 `formatPercentageFraction()`。DTO 目前仍是 canonical decimal `string`，因此关键计算 API 已使用 `dingbiaoK1Fraction`、`finalDrawValueFraction`、`qingbiaoK2Value` / `qingbiaoK2Rate` 等名称；16 场景模型升级时可进一步引入 branded decimal string，避免普通 `string` 误接。
 
-- `formatPercentagePoints("10.385") -> "10.39%"`
-- `formatStoredPercentage("0.1038") -> "10.38%"`
+## 7. 数据模型已具备 16 场景承载能力
 
-函数本身都正确，问题是 DTO 字段只有 `string`，调用点无法从类型上判断单位。后续应在 domain/DTO 中显式区分 `DecimalFractionString`、`PercentagePointString` 或使用带语义的字段类型/构造函数，并让 formatter 名称与类型约束共同防止误用。
+### 7.1 推优规则与剔除单位已经显式建模
 
-## 7. 当前 Prisma 为什么无法支持 16 场景
+- `QingbiaoExclusionRule` 使用项目内 `ruleIndex=1/2/3/4` 四个中性槽位，不硬编码未确认规则名称。
+- `QingbiaoExclusionRuleCandidate` 通过稳定 `candidateId` 保存每个规则的被剔除单位。
+- `(projectId, ruleIndex)` 和 `(exclusionRuleId, candidateId)` 分别保证规则与剔除关系唯一。
+- 新建项目自动创建四条规则；幂等 ensure 能力为历史项目补齐且不会生成第五条。
 
-### 7.1 清标唯一键压缩了推优维度
+### 7.2 清标场景使用完整身份
 
-当前：
+当前唯一身份已改为：
 
-```prisma
-@@unique([projectId, qingbiaoK2, version])
+```text
+exclusionRuleId + qingbiaoK2Value
 ```
 
-同一个项目、K2 和版本只能有一条 `QingbiaoScenario`。新版同一个 K2 必须同时存在 4 条不同推优规则的场景，因此数据库会发生唯一键冲突或 upsert 覆盖。
+同一个项目的 4 个规则可以各自保存 K2=0/1/2/3，因此可实际持久化 16 条 `QingbiaoScenario`。`QingbiaoResult` 继续属于具体 scenario，Top5 仍由 `finalRank <= 5` 推导。
 
-### 7.2 没有推优规则实体
+### 7.3 定标来源与抽值槽位已经显式建模
 
-当前 `QingbiaoScenarioCandidate` 表示“该 K2 场景选了哪些参考单位”。新版需要表达：
+所有新定标写入使用：
 
-- 4 个稳定的推优规则实例；
-- 每个规则选择了哪些 **剔除单位**；
-- 每个规则只计算一次、被 4 个 K2 复用的清标 K1；
-- 规则选择与 4 个派生清标场景之间的来源关系。
-
-现有模型既没有规则身份，也没有区分 included reference candidate 与 excluded candidate 的语义。
-
-### 7.3 定标唯一键仍依赖 K2
-
-当前：
-
-```prisma
-@@unique([projectId, qingbiaoK2, finalistCount, finalDrawSlot, version])
+```text
+sourceQingbiaoScenarioId + finalistCount + finalDrawIndex
 ```
 
-即使 `DingbiaoScenario` 已有正确方向的 `qingbiaoScenarioId` 外键，唯一键仍以 K2 为来源身份。同 K2 的 4 个清标来源无法分别保存定标结果。
+`finalDrawValue` 不进入唯一键，相同数值可以出现在不同 index。Repository 只替换同一 source 的场景，不再按项目删除其他清标来源，因此每套清标场景可以保存 9 条、项目模型可以承载 144 条定标场景。
 
-### 7.4 保存策略只允许一个定标来源
+### 7.4 历史兼容不冒充新版结果
 
-`dingbiao-repository.ts` 在保存前执行按项目删除全部 `DingbiaoScenario`。这会保留“最后一次选中范围”的 9 个场景，但无法保留多个清标来源的定标结果，也无法支撑 Excel 所描述的跨推优规则全局比较。
+迁移前清标结果无法推断规则归属，因此保留为 `exclusionRuleId=null + isLegacy=true`；迁移前定标行的新增 source/index 字段保持 null。旧 4 场景页面临时读写 `ruleIndex=1 + isLegacy=true`，这不代表正式“推优规则1”。
 
-### 7.5 读取完整性被硬编码为 4
+### 7.5 尚未完成的是算法与产品层
 
-- 清标 repository 只有记录数恰好为 `QINGBIAO_K2_VALUES.length`，即 4，才返回保存批次。
-- analysis repository 只有 `project.qingbiaoScenarios.length === 4` 才认为清标结果是当前有效结果。
-- 排序和 Map 均只以 K2 为键。
-
-因此仅修改 Prisma 唯一键仍不够，domain 类型、批次完整性、repository 查询和 application DTO 必须一起升级。
+数据模型和新 repository 查询已能按规则、K2、scenarioId 和 source scenario 访问数据；但当前清标 domain、UI 和 analysis 仍然只执行/展示旧 4 场景兼容流程。16 场景批量计算、完整性校验和全局分析属于后续步骤。
 
 ## 8. 当前清标 UI 为什么不符合新版 Excel
 
@@ -459,7 +446,7 @@ K2=3% 卡片 -> 选择用于平均报价 B 的单位
 6. UI 无法展示每个推优规则共享的 K1、4 个 B 和 4 个 Top5 之间的层级关系。
 7. 清标 K1 当前按 percentage point formatter 显示；目标 fraction 后必须切换语义明确的 formatter。
 
-## 9. 当前定标为什么不能只依赖 qingbiaoK2
+## 9. 旧定标为什么不能只依赖 qingbiaoK2，以及 Step 6 修复
 
 同一个 K2 在新版有 4 个不同来源：
 
@@ -472,7 +459,7 @@ K2=3% 卡片 -> 选择用于平均报价 B 的单位
 
 它们的 K1、B、最终排名和 Top5 都可能不同。仅传 `qingbiaoK2=1` 无法确定选择哪套结果。
 
-当前问题贯穿全层：
+Step 6 前的问题曾贯穿全层：
 
 - `dingbiao-action-schema.ts` 只接收 `qingbiaoK2`。
 - `calculateAndSaveDingbiao()` 通过 `.find(scenario.qingbiaoK2 === qingbiaoK2)` 选择来源。
@@ -480,7 +467,7 @@ K2=3% 卡片 -> 选择用于平均报价 B 的单位
 - repository 的保存唯一键继续包含 K2，而不是以 source scenario/run 为主键。
 - latest calculation 视图也只用 K2 判断是否属于当前选择。
 
-新版 action 应提交 `qingbiaoScenarioId`。application 必须验证该场景属于当前项目、当前输入修订和当前规则版本，然后从这条场景的有序结果构造 Top5/4/3。`exclusionRule + qingbiaoK2Rate` 可以作为展示和业务复合键，但不应替代稳定 ID 进行传输和关联。
+Step 6 已完成该迁移：action 提交 `sourceQingbiaoScenarioId`；application 只从 current 的 16 项目录精确匹配该 ID；repository 再次校验项目、清标规则版本、修订和有序结果，并从同一来源构造 Top5/4/3。`exclusionRule + qingbiaoK2Rate` 仅用于展示，不替代稳定 ID。
 
 ## 10. 当前 analysis 为什么只支持旧 4 场景
 
@@ -491,7 +478,7 @@ K2=3% 卡片 -> 选择用于平均报价 B 的单位
 5. analysis repository 以 `qingbiaoScenarios.length === 4` 判断当前结果完整。
 6. UI 固定显示“进入 Top5 场景 x / 4”，表格、趋势图和无障碍描述都只列 4 个 K2。
 7. `AnalysisDingbiaoScenarioInput` 没有来源清标场景 ID；若未来同时加载多来源定标结果，N 分组会混合不同 finalist scope。
-8. 当前定标 repository 每次覆盖项目全部定标场景，analysis 实际只能看到最近选中清标来源的最多 9 条结果。
+8. Step 6 repository 已能并存多个 source；但当前 analysis 仍只挑选一个规则 1 兼容来源的最多 9 条结果，尚不会聚合全部来源。
 
 新版 analysis 必须先按清标场景身份分组，再在场景内按 N 和抽值分组。任何“最佳场景”结论都必须显示完整来源：推优规则、清标 K2、N、定标抽值，以及所用的输入/规则版本。
 
@@ -499,13 +486,12 @@ K2=3% 卡片 -> 选择用于平均报价 B 的单位
 
 ### 11.1 P0：编码前必须确认
 
-1. **M 公式**：N=5 使用 `1-K1-draw`，N=4/N=3 使用旧的 `K1+draw`。必须确认三个 N 是否统一，以及最终 fraction 公式。
-2. **4 种推优规则的精确定义**：Excel 的“（1）/（2）/（⅓）/（¼）”是稳定规则名称、剔除家数还是剔除比例；每组允许/要求选择多少家；能否重复选择同一单位。
-3. **被剔除单位的后续资格**：本次流程明确其用于 K1 样本剔除，但 Excel 没有单独确认其是否仍参加该场景的报价/综合排名。本文暂按“仍参加排名”理解，编码前需签字。
-4. **最终定标范围与全局分析宇宙**：是用户只选 1 套清标 Top5 并保存 9 个定标场景，还是要对全部 16 套 Top5 都计算并保留定标结果。Excel 的“全局汇总”暗示跨全部推优规则和 K2 比较，但定标顶部又是单选。
-5. **全局分析维度**：Excel 写“4 种推优规则 × 4 种 K2 × 3 组定标抽值”，遗漏 N=5/4/3。若三个 N 都参与，全量是 `4×4×3×3=144` 个定标场景，不是 48 个。需要明确中标率和“最佳组合”的聚合分母。
-6. **比例历史数据迁移口径**：旧 `qingbiaoK1` 是百分点，生产 `dingbiaoK1/finalDrawValue` 多数是 fraction，旧测试又使用百分点。不得无版本地原位重新解释历史结果。
-7. **新版黄金数值夹具**：最新版 Excel 没有数值实例和可执行公式。至少要签署一组覆盖 4 个剔除规则、整数取整/去重、16 个 B/Top5、三个 N、三个抽值和 M 的完整结果。
+1. **4 种推优规则的精确定义**：Excel 的“（1）/（2）/（⅓）/（¼）”是稳定规则名称、剔除家数还是剔除比例；每组允许/要求选择多少家；能否重复选择同一单位。
+2. **被剔除单位的后续资格**：当前实现按“只影响 K1 样本、仍参加排名”执行，仍需业务签字。
+3. **最终定标范围与全局分析宇宙**：Step 6 明确一次只计算用户选择的 1 套清标 Top5、最多保存 9 个场景；Step 7 是否自动对全部 16 个来源形成 144 场景仍需确认。
+4. **全局分析维度**：Excel 写“4 种推优规则 × 4 种 K2 × 3 组定标抽值”，遗漏 N=5/4/3。若三个 N 都参与，全量是 `4×4×3×3=144` 个定标场景，需要明确中标率和“最佳组合”的聚合分母。
+5. **外部历史结果迁移口径**：代码、seed、fixture 和当前 `dev.db` 已统一 fraction，但其他环境可能仍有旧版百分点 `qingbiaoK1`。必须先运行只读比例审计并按规则版本制定迁移，不得无版本地原位重新解释。
+6. **新版全链路黄金数值夹具**：Step 6 已新增人工可核验的定标 Golden Fixture；仍缺业务签署的一组完整 4 个剔除规则、16 个 B/Top5 结果。
 
 ### 11.2 P1：应在相应模块编码前确认
 
@@ -528,11 +514,11 @@ K2=3% 卡片 -> 选择用于平均报价 B 的单位
 4. 清标 K 列注释列出多个业务评分子项，但没有说明这些子项如何汇总到 `otherScore`，后续若要明细化需另行建模。
 5. Excel import 当前有意忽略清标和定标 Sheet。若未来要导入已算结果，需要独立、版本化的结果导入协议，不能复用当前基础数据导入。
 
-## 12. 推荐的数据模型升级方案
+## 12. 已落地结构与长期数据模型演进
 
-以下是目标结构建议，不代表本步骤修改 schema。
+Step 3 已按最小兼容方案落地 `QingbiaoExclusionRule`、显式剔除关联、16 场景唯一身份、定标 source/index 身份和入围快照字段，没有提前引入 calculation batch/run/group。以下 batch/run 结构仍是需要历史多版本、一次性保存完整 16 场景或全局分析批次时的长期演进建议，不代表当前 schema。
 
-### 12.1 清标计算批次
+### 12.1 长期清标计算批次
 
 ```text
 QingbiaoCalculationBatch
@@ -556,7 +542,7 @@ QingbiaoExclusionCandidate
 QingbiaoScenario
   id
   exclusionRuleId
-  qingbiaoK2Rate          // 0 / 0.01 / 0.02 / 0.03
+  qingbiaoK2Value         // 0 / 1 / 2 / 3 identity；rate 唯一推导
   referencePriceB
   inputRevision
   ruleVersion
@@ -577,13 +563,13 @@ QingbiaoResult
 
 - `QingbiaoExclusionRule`：`unique(batchId, ruleKey)`，每批恰好 4 条由 application/domain 完整性校验。
 - `QingbiaoExclusionCandidate`：`unique(exclusionRuleId, candidateId)`。
-- `QingbiaoScenario`：`unique(exclusionRuleId, qingbiaoK2Rate)`，每个规则恰好 4 条。
+- `QingbiaoScenario`：`unique(exclusionRuleId, qingbiaoK2Value)`，每个规则恰好 4 条。
 - `QingbiaoResult`：`unique(scenarioId, candidateId)`，并索引 `(scenarioId, finalRank)`。
 - K1 放在 exclusion rule 上，清晰表达其被该规则的 4 个 K2 场景复用；场景可额外保存 K1 快照以方便历史报告，但必须有单一权威来源。
 
 Top5 可由保存的 `finalRank <= 5` 确定，不必额外复制一份当前态列表。进入定标时，应在定标 run/group 中保存入围快照，保证上游重算后历史结果仍可复现。
 
-### 12.2 定标计算批次与入围快照
+### 12.2 长期定标计算批次与入围快照
 
 ```text
 DingbiaoCalculationRun
@@ -612,7 +598,7 @@ DingbiaoFinalist
 DingbiaoScenario
   id
   finalistGroupId
-  finalDrawSlot           // 1 / 2 / 3
+  finalDrawIndex          // 1 / 2 / 3
   finalDrawValueRate      // fraction
   benchmarkPriceM
 
@@ -629,14 +615,14 @@ DingbiaoResult
 
 - `unique(runId, finalistCount)`。
 - `unique(groupId, candidateId)` 和 `unique(groupId, position)`。
-- `unique(finalistGroupId, finalDrawSlot)`。
+- `unique(finalistGroupId, finalDrawIndex)`。
 - `sourceQingbiaoScenarioId` 是定标来源主身份；exclusionRule 和 K2 可作为快照/展示字段，但不能替代该外键。
 - 如果全局分析需要全部 16 个来源，允许同一项目保留多个 current run，或建立一个包含 16 个 source run 的 analysis batch；不能继续按项目无差别 `deleteMany`。
 
 ### 12.3 比例与版本
 
 - 所有 rate 字段使用 Prisma Decimal 并在 repository 边界映射为 domain decimal string。
-- `qingbiaoK2Rate` 也采用 fraction，或者保存受控 code 并由唯一映射函数生成 fraction；不得让 `1` 同时可能表示 `1%` 或 `100%`。
+- 当前保存受控 `qingbiaoK2Value` 并由唯一映射函数生成 fraction；不得让 `1` 同时可能表示 `1%` 或 `100%`。
 - 新规则使用新的 `ruleVersion`，例如 `qingbiao-20260820-v1` / `dingbiao-20260820-v1`；旧结果不应在没有显式迁移策略时伪装成新版结果。
 - 历史结果应保留输入修订和不可变候选/规则快照或可追溯 revision reference。
 
@@ -645,27 +631,27 @@ DingbiaoResult
 1. **签署 P0 规则和黄金夹具**
    - 确认 4 种推优规则、剔除后资格、M 公式、全局分析范围和比例历史迁移。
    - 为 16 个清标场景和定标场景建立业务签署的数值 fixture。
-2. **建立统一比例契约**
-   - 在 domain/DTO 明确 fraction 与 percentage point 类型。
-   - 先补齐边界转换和 formatter 测试，再处理旧数据策略；不直接改业务公式期待“顺带修好”。
-3. **升级清标纯 domain**
+2. **建立统一比例契约（已于 2026-08-24 完成）**
+   - DB/domain/service 的真正比例均为 fraction；UI 和 Excel 只在明确边界转换。
+   - 已补齐统一工具、formatter、K2 value-to-rate、round trip、只读数据审计和 stored-fraction regression 测试。
+3. **建立 16 场景持久化基础（已于 2026-08-24 完成）**
+   - 已增加 4 个规则槽位、显式 excluded candidates、`rule + K2` 唯一键和 source/index 定标唯一键。
+   - 已用 staged nullable relation 保留旧结果，并为新定标结果保存来源排名、报价和净下浮率快照。
+4. **升级清标纯 domain（已完成）**
    - 实现推优规则 K1 的转百分点、整数舍入、去重、平均。
    - 实现 K1 × K2 的 B 和 16 场景批量计算。
    - 保留现有正确的履约、报价排名、总分字段集合和未舍入排名原则，并按确认后的边界/并列规则补测试。
-4. **设计并迁移清标持久化模型**
-   - 增加 calculation batch、exclusion rule、excluded candidates 和 16 场景唯一键。
-   - 明确旧 v1 场景归档、失效或迁移方案，不改写已应用 migration。
-5. **升级清标 repository/application**
+5. **升级清标 application 的完整批次保存（已完成）**
    - 一次事务保存完整 4+16 批次；完整性检查从“4 个 K2”升级为“4 个规则、每规则 4 个 K2”。
    - 保存规则版本、输入修订和来源快照。
-6. **重做清标 UI**
+6. **重做清标 UI（已完成）**
    - 先配置 4 组剔除单位，再展示 4×4 结果矩阵、16 个 Top5 和可追溯场景 ID。
-   - 修正候选单位净下浮率 formatter。
-7. **升级定标来源与持久化**
+   - 复用已统一的 fraction formatter，不再新增百分点内部表示。
+7. **升级定标来源与持久化（Step 6 已完成）**
    - action 传 `qingbiaoScenarioId`；验证项目、revision、ruleVersion。
-   - 保存 Top5/4/3 入围快照；唯一键移至 source run/group。
-8. **在 P0 公式确认后修改唯一 M 入口**
-   - 只修改 `calculateFinalBenchmarkPrice()` 及其黄金测试，不在 application/UI/repository 复制公式。
+   - 数据层已保存 Top5/4/3 入围快照且唯一键已使用 source/index；此步剩余 UI/action 从 K2 单选迁移到 scenarioId。
+8. **统一 M 公式（Step 6 已完成）**
+   - 已只修改 `calculateFinalBenchmarkPrice()` 及其黄金测试，三个 N 共用该入口；Application/UI/Repository 未复制公式。
 9. **升级 analysis 和报告**
    - 以完整场景身份分组；定义 16 清标场景、多个定标来源和 N 维度的聚合规则。
    - 所有最佳场景结论带完整来源和版本。
@@ -677,23 +663,102 @@ DingbiaoResult
 
 | 优先级 | 问题 | 处置 |
 | --- | --- | --- |
-| P0 | 4×4 场景身份缺失，schema/repository/UI/analysis 都按 K2 唯一 | 先确定目标模型和场景 ID，再编码 |
+| 已完成 | 4×4 场景身份缺失，schema/repository 按 K2 唯一 | 已建立 rule+K2、source+N+drawIndex 身份；UI/analysis 升级仍待后续 |
 | P0 | 清标 K1/B 的旧公式和选择语义不符合新版 | 用新版黄金夹具重建清标 domain，不兼容沿用旧 fixture |
-| P0 | fraction 与 percentage point 混用导致展示错误和 M 数量级错误 | 统一内部 fraction，制定历史数据和 DTO 迁移策略 |
-| P0 | N=5 与 N=4/N=3 的 M 公式冲突 | 业务签署唯一公式，保持单一函数入口 |
+| 已完成 | fraction 与 percentage point 混用导致展示错误和 M 数量级错误 | 内部 fraction、边界转换、只读审计和 regression 已落地；外部旧库仍须先审计 |
+| 已完成 | N=5 与 N=4/N=3 的 M 公式冲突 | 已按统一净下浮率语义采用 `1-K1-draw`，三个 N 保持单一函数入口 |
 | P0 | 最终定标单选与“全局汇总”范围、N 维度冲突 | 明确需保存/分析的场景全集和中标率分母 |
 | P0 | 4 种推优规则的名称、选择数量和剔除后资格不明确 | 形成规则枚举、校验规则和数值 fixture |
 | P1 | 履约加权权重、缺失数据、Amax=Amin 未签署 | 暂保留当前临时规则并持续显式标记 |
 | P1 | 舍入中点、空集合、清标/定标完整并列规则未定义 | 加边界黄金测试后实现 |
 | P1 | 参数区重复评分字段、我方单位输入、定标抽值范围未明确 | 在对应表单和模型改造前确认 |
-| P1 | 定标保存会删除其他来源，analysis 无来源维度 | 引入 run/source scenario 分组后再做全局分析 |
+| P1 | analysis 尚无完整来源维度 | 数据层已按 source 保存且不会删除其他来源；全局聚合规则确认后升级 analysis |
 | P2 | 术语、报告编号、N=4/N=3“前5家”旧文案 | 核心规则稳定后统一产品文案 |
 | P2 | 清标/定标结果导入、评分子项明细化 | 作为独立版本化需求处理 |
 
-## 15. 本次审计边界
+## 15. 2026-08-20 审计边界
 
 - 已完整读取 `AGENTS.md`、`README.md`、`docs/architecture.md`、`docs/data-model.md`、`docs/calculation-rules.md`。
 - 已审计指定的 Prisma、qingbiao、dingbiao、analysis、performance、application、repository、features、regression、imports 代码和测试，并补充检查了候选单位/项目设置百分比边界及所有 percentage formatter 调用点。
 - 已逐 Sheet 读取最新版 Excel 的非空单元格、合并区域、数字格式和批注。文件没有实际公式、命名区域、数据验证或数值业务样例；清标 K 列有一条评分子项批注，但未给出汇总公式。
 - 实际用现有 Excel reader/parser 读取该文件时，可以识别参数、候选和 2022Q2 至 2026Q2 的履约字段映射；由于文件内容是“录入/选择/自动计算”占位文本，解析结果按设计返回校验错误和 `data: null`，并对清标/定标 Sheet 给出“只用于对照、不导入旧结果”的 warning。
 - 本次只新增本文档，没有修改业务代码、schema、migration 或测试预期。
+
+## 16. 2026-08-24 percentage P0 实施结论
+
+- 已统一 percentage representation，但没有修改 Prisma schema、migration 或 4 场景 identity。
+- percentage Step 2 当时的 M 唯一入口仍执行旧业务方向；该历史结论已被 Step 6 覆盖。
+- Step 6 已正式采用 `1 - K1 - draw`，并把 N=4/N=3 的旧方向认定为模板复制错误。
+- 本次没有实现 4 种推优剔除、16 清标场景、新清标 UI、144 定标场景或全场景 analysis。
+- 比例基础契约现已具备承接 16 场景模型升级的条件；真正开始 schema/domain 升级前，仍须签署第 11 节所列 P0 规则和新版黄金 fixture。
+
+## 17. 2026-08-24 场景数据模型实施结论
+
+- Prisma 已具备 4 个推优规则、每规则多个被剔除候选、每规则 4 个 K2 场景，以及每清标场景 9 个定标场景的持久化能力。
+- 清标唯一身份为 `exclusionRuleId + qingbiaoK2Value`；定标唯一身份为 `sourceQingbiaoScenarioId + finalistCount + finalDrawIndex`。
+- “全场景入围单位”继续由 16 个 scenario 各自的有序 `QingbiaoResult finalRank<=5` 表达，不建立公司名称并集或重复 Top5 表。
+- 定标新写入保存来源清标排名、投标价和净下浮率快照；相同 `finalDrawValue` 的不同 index 可以并存。
+- 旧 4 场景页面继续使用 `ruleIndex=1 + isLegacy=true` 临时路径；新版算法/UI 未实现，analysis 也仍只读取此兼容范围。
+- 历史迁移不推断旧场景的规则含义：旧行保留 nullable 新关系并标记 legacy，新写入必须使用完整身份。
+- 本步骤没有修改任何清标、定标或 M 公式；下一步可以在独立 domain fixture 下实现新版清标算法。
+
+## 18. Step 5 新版清标 Application / Repository / UI 实施结论（2026-08-24）
+
+本步骤已把 `/projects/[id]/qingbiao` 从旧 4 场景交互升级为真实 16 场景端到端流程：
+
+1. 页面展示中性的规则 1–4；每条规则分别勾选并保存被剔除候选，允许 0 家，禁止全部剔除。
+2. 剔除关系事务替换为 `QingbiaoExclusionRuleCandidate(exclusionRuleId, candidateId)`，不以公司名关联。
+3. Application 加载项目参数、候选、4 条规则、各规则剔除集合和履约数据。
+4. Application 明确采用 `K1=NON_EXCLUDED_CANDIDATES`、`Ranking=ALL_CANDIDATES`，不依赖 Domain 默认策略。
+5. `calculateAllQingbiaoScenarios()` 调用既有 V2 Domain 16 次，得到完整 `4 × 4` 结果。
+6. Repository 在一个 Prisma transaction 内校验、upsert 16 个身份并逐场景替换结果；重算维持 16 个场景，不产生追加副本。
+7. UI 以“规则 Tabs -> K2 Tabs -> 单场景结果”展示 K1、B、完整排序与 Top5，并增加固定 16 行全场景总览。
+8. `getQingbiaoScenarioCatalog(projectId)` 返回保留 `scenarioId + finalRank` 的 16 组 Top5，不做公司名称去重并集。
+9. 规则保存会增加 `qingbiaoInputRevision`；页面把旧结果标记为 stale，重新成功测算后恢复 current。
+10. 新版 UI、Application 和 Repository 查询均不再依赖“项目只有 4 个 K2 场景”的假设。
+
+### 18.1 兼容边界
+
+- 未修改 Prisma schema、migration、V2 Domain 核心与 Step 4 Golden fixture。
+- 这是 Step 5 完成时的历史边界；定标 Domain、定标 UI 和 M 公式现已由 Step 6 升级，analysis/report 和 144 场景仍未实现。
+- `ruleIndex=1 + isLegacy=true` 暂时只作为旧定标/analysis 的底层桥接；新版清标不按它筛选。
+- 无完整 16 条 V2 结果的历史项目在新版页面显示“尚未计算”，不会崩溃，也不会把旧 4 条冒充新版结果。
+
+### 18.2 已实现失效与尚存限制
+
+以下变更通过项目修订号让既有清标结果失效：规则剔除关系、候选报价/净下浮率/评分字段、最高限价、不可竞争费、清标报价分和排名扣分。页面仍可查看旧快照，但明确标记“结果已过期”，且不会当作 current 目录供后续流程使用。
+
+`CompanyPerformance` 是按公司名和专业跨项目共享的数据。当前履约新增/修改尚未建立反向项目依赖，因此不能自动递增所有受影响项目的 `qingbiaoInputRevision`。进入 Step 7 全场景分析前应决定采用依赖索引、计算时履约摘要 hash，或 calculation input snapshot 来封闭这一缺口。
+
+### 18.3 下一开发顺序
+
+1. 业务确认推优剔除是否只影响 K1、四种规则的正式语义/名称和每条允许剔除数量。
+2. M 冲突已按统一净下浮率语义解决，三个 N 只通过 `calculateFinalBenchmarkPrice()` 计算。
+3. Step 6 已将定标来源改为唯一 `sourceQingbiaoScenarioId`，直接消费 16 项目录中的有序 Top5。
+4. 下一步先确认 144 场景的分析聚合口径并完成履约变化失效策略，再升级 analysis/report。
+5. 补充由业务签署的完整 Excel 数值 golden fixture 和浏览器 E2E。
+
+## 19. Step 6 新版定标实施结论（2026-08-24）
+
+1. 现有定标 Domain 已原位升级为 `dingbiao-20260820-v2`；新增公开纯函数 `calculateDingbiaoScenario()` 和 `calculateDingbiaoSimulation()`，旧入口仅作为同实现兼容别名，不存在并行公式。
+2. `calculateFinalBenchmarkPrice()` 正式统一执行 `(1-K1-draw)×(H-C)+C`，N=5/4/3 全部调用它；非正比例项返回结构化错误。
+3. 定标 K1 对所选来源的 Top5/Top4/Top3 分别直接求 fraction 算术平均，不 round、不 unique，也不复用清标 K1。
+4. 页面和 action 已从 K2 单选迁移为 `sourceQingbiaoScenarioId`，选项来自 current 的 16 项清标目录，并展示来源规则、K2、清标 K1、B 和有序 Top5。
+5. 一次操作只计算一个来源，正常生成 9 套；候选不足时仅生成有效 N，绝不自动生成 144 套。
+6. `finalDrawIndex=1/2/3` 是抽值身份；相同抽值数值仍保留独立场景。
+7. winner 稳定排序为差额升序、报价升序、candidateId 升序；`DingbiaoResult` 保存报价、净下浮率和清标来源排名快照。
+8. 模拟中标率在 Domain 内为 fraction；无我方单位不阻断计算，UI 显示“未设置我方单位”。
+9. 保存事务只替换当前 source；来源 A 重算不删除来源 B，重复重算不产生第 10 条。清标重算会删除对应 source 的旧定标派生结果。
+10. 刷新页面可恢复最后一次 source、场景结果和模拟中标率；stale/missing/不可靠来源不会进入正式定标。
+11. 已增加人工可验的 N=5/4/3 定标 Golden Fixture，关键数值记录于 `docs/dingbiao-flow.md`。
+12. 本步骤没有修改 Prisma schema 或 migration，没有升级 Step 7 analysis/report，也没有自动计算 144 场景。
+
+### 19.1 Step 7 前仍待确认
+
+- 是否自动计算并持久化全部 `16×9=144` 场景，以及全局模拟中标率的分母和最佳场景聚合规则；
+- 4 种推优剔除规则的正式名称、每组选择数量和被剔除单位是否继续参加排名；
+- 最近 12 季度履约的具体权重、缺失专业和同分边界策略；
+- 定标抽值是否允许负数。当前 Step 6 按 fraction 合同限制为 `[0,1]`，允许三个 index 数值重复；
+- M、K1、差额和报告输出的最终展示/导出舍入精度；排名继续使用未舍入值；
+- `CompanyPerformance` 跨项目变更如何可靠触发所有依赖项目的清标/定标失效；
+- Step 7 analysis 对多个 current source 的版本批次、并列规则和报告来源标注。

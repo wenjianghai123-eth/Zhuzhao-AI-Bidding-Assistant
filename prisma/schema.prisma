@@ -21,17 +21,18 @@ enum ProjectType {
 }
 
 model Project {
-  id                    String             @id @default(cuid())
-  name                  String
-  status                ProjectStatus      @default(DRAFT)
-  qingbiaoInputRevision Int                @default(1)
-  dingbiaoInputRevision Int                @default(1)
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
-  rule                  ProjectRule?
-  candidates            ProjectCandidate[]
-  qingbiaoScenarios     QingbiaoScenario[]
-  dingbiaoScenarios     DingbiaoScenario[]
+  id                     String                  @id @default(cuid())
+  name                   String
+  status                 ProjectStatus           @default(DRAFT)
+  qingbiaoInputRevision  Int                     @default(1)
+  dingbiaoInputRevision  Int                     @default(1)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  rule                   ProjectRule?
+  candidates             ProjectCandidate[]
+  qingbiaoExclusionRules QingbiaoExclusionRule[]
+  qingbiaoScenarios      QingbiaoScenario[]
+  dingbiaoScenarios      DingbiaoScenario[]
 
   @@index([status])
   @@index([createdAt])
@@ -62,7 +63,7 @@ model ProjectRuleProjectType {
 }
 
 model ProjectCandidate {
-  id                     String                      @id @default(cuid())
+  id                     String                           @id @default(cuid())
   projectId              String
   companyName            String
   bidPrice               Decimal
@@ -71,11 +72,12 @@ model ProjectCandidate {
   technicalScore         Decimal
   similarExperienceScore Decimal
   otherScore             Decimal
-  isOurCompany           Boolean                     @default(false)
-  createdAt              DateTime                    @default(now())
-  updatedAt              DateTime                    @updatedAt
-  project                Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  isOurCompany           Boolean                          @default(false)
+  createdAt              DateTime                         @default(now())
+  updatedAt              DateTime                         @updatedAt
+  project                Project                          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   qingbiaoSelections     QingbiaoScenarioCandidate[]
+  qingbiaoExclusions     QingbiaoExclusionRuleCandidate[]
   qingbiaoResults        QingbiaoResult[]
   dingbiaoResults        DingbiaoResult[]
 
@@ -102,24 +104,55 @@ model CompanyPerformance {
   @@index([year, quarter])
 }
 
-model QingbiaoScenario {
-  id                 String                      @id @default(cuid())
+model QingbiaoExclusionRule {
+  id                 String                           @id @default(cuid())
   projectId          String
-  qingbiaoK2         Int                         @map("k2Value")
-  referencePriceB    Decimal
-  qingbiaoK1         Decimal
-  version            Int                         @default(1)
-  inputRevision      Int
-  ruleVersion        String
-  createdAt          DateTime                    @default(now())
-  updatedAt          DateTime                    @updatedAt
-  project            Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  selectedCandidates QingbiaoScenarioCandidate[]
-  results            QingbiaoResult[]
-  dingbiaoScenarios  DingbiaoScenario[]
+  ruleIndex          Int
+  label              String?
+  createdAt          DateTime                         @default(now())
+  updatedAt          DateTime                         @updatedAt
+  project            Project                          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  excludedCandidates QingbiaoExclusionRuleCandidate[]
+  scenarios          QingbiaoScenario[]
 
-  @@unique([projectId, qingbiaoK2, version], map: "QingbiaoScenario_projectId_k2Value_version_key")
+  @@unique([projectId, ruleIndex])
+  @@index([projectId])
+}
+
+model QingbiaoExclusionRuleCandidate {
+  exclusionRuleId String
+  candidateId     String
+  createdAt       DateTime              @default(now())
+  exclusionRule   QingbiaoExclusionRule @relation(fields: [exclusionRuleId], references: [id], onDelete: Cascade)
+  candidate       ProjectCandidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@id([exclusionRuleId, candidateId])
+  @@index([candidateId])
+}
+
+model QingbiaoScenario {
+  id                      String                      @id @default(cuid())
+  projectId               String
+  exclusionRuleId         String?
+  qingbiaoK2              Int                         @map("k2Value")
+  referencePriceB         Decimal
+  qingbiaoK1              Decimal
+  isLegacy                Boolean                     @default(false)
+  version                 Int                         @default(1)
+  inputRevision           Int
+  ruleVersion             String
+  createdAt               DateTime                    @default(now())
+  updatedAt               DateTime                    @updatedAt
+  project                 Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  exclusionRule           QingbiaoExclusionRule?      @relation(fields: [exclusionRuleId], references: [id], onDelete: Restrict)
+  selectedCandidates      QingbiaoScenarioCandidate[]
+  results                 QingbiaoResult[]
+  legacyDingbiaoScenarios DingbiaoScenario[]          @relation("LegacyDingbiaoSource")
+  sourceDingbiaoScenarios DingbiaoScenario[]          @relation("DingbiaoSource")
+
+  @@unique([exclusionRuleId, qingbiaoK2], map: "QingbiaoScenario_exclusionRuleId_k2Value_key")
   @@index([projectId, createdAt])
+  @@index([exclusionRuleId])
 }
 
 model QingbiaoScenarioCandidate {
@@ -155,40 +188,46 @@ model QingbiaoResult {
 }
 
 model DingbiaoScenario {
-  id                 String           @id @default(cuid())
-  projectId          String
-  qingbiaoScenarioId String
-  qingbiaoK2         Int              @map("qingbiaoK2Value")
-  finalistCount      Int
-  finalDrawSlot      Int
-  finalDrawValue     Decimal
-  dingbiaoK1         Decimal
-  benchmarkPriceM    Decimal
-  version            Int              @default(1)
-  inputRevision      Int
-  ruleVersion        String
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
-  project            Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  qingbiaoScenario   QingbiaoScenario @relation(fields: [qingbiaoScenarioId], references: [id], onDelete: Restrict)
-  results            DingbiaoResult[]
+  id                       String            @id @default(cuid())
+  projectId                String
+  qingbiaoScenarioId       String
+  sourceQingbiaoScenarioId String?
+  qingbiaoK2               Int               @map("qingbiaoK2Value")
+  finalistCount            Int
+  finalDrawSlot            Int
+  finalDrawIndex           Int?
+  finalDrawValue           Decimal
+  dingbiaoK1               Decimal
+  benchmarkPriceM          Decimal
+  version                  Int               @default(1)
+  inputRevision            Int
+  ruleVersion              String
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+  project                  Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  qingbiaoScenario         QingbiaoScenario  @relation("LegacyDingbiaoSource", fields: [qingbiaoScenarioId], references: [id], onDelete: Restrict)
+  sourceQingbiaoScenario   QingbiaoScenario? @relation("DingbiaoSource", fields: [sourceQingbiaoScenarioId], references: [id], onDelete: Restrict)
+  results                  DingbiaoResult[]
 
-  @@unique([projectId, qingbiaoK2, finalistCount, finalDrawSlot, version], map: "DingbiaoScenario_projectId_qingbiaoK2Value_finalistCount_finalDrawSlot_version_key")
+  @@unique([sourceQingbiaoScenarioId, finalistCount, finalDrawIndex], map: "DingbiaoScenario_sourceScenario_finalistCount_drawIndex_key")
   @@index([projectId, createdAt])
   @@index([qingbiaoScenarioId])
+  @@index([sourceQingbiaoScenarioId])
 }
 
 model DingbiaoResult {
-  id            String           @id @default(cuid())
-  scenarioId    String
-  candidateId   String
-  bidPrice      Decimal
-  differenceToM Decimal
-  rank          Int
-  isWinner      Boolean          @default(false)
-  createdAt     DateTime         @default(now())
-  scenario      DingbiaoScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
-  candidate     ProjectCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  id                      String           @id @default(cuid())
+  scenarioId              String
+  candidateId             String
+  sourceQingbiaoRank      Int?
+  bidPrice                Decimal
+  netDiscountRateSnapshot Decimal?
+  differenceToM           Decimal
+  rank                    Int
+  isWinner                Boolean          @default(false)
+  createdAt               DateTime         @default(now())
+  scenario                DingbiaoScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  candidate               ProjectCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
   @@unique([scenarioId, candidateId])
   @@index([candidateId])

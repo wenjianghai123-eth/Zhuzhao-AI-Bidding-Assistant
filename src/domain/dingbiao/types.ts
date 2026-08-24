@@ -1,14 +1,16 @@
-import type { QingbiaoK2 } from "@/domain/qingbiao";
-
 export const DINGBIAO_FINALIST_COUNTS = [5, 4, 3] as const;
+export const DINGBIAO_FINAL_DRAW_INDEXES = [1, 2, 3] as const;
 export const DINGBIAO_SIMULATION_COUNT = 3;
-export const DINGBIAO_RULE_VERSION = "dingbiao-mvp-v1";
+export const DINGBIAO_RULE_VERSION = "dingbiao-20260820-v2";
 
 export type DingbiaoFinalistCount =
   (typeof DINGBIAO_FINALIST_COUNTS)[number];
-
-export type FinalDrawSlot = 1 | 2 | 3;
-export type FinalDrawValues = readonly [string, string, string];
+export type FinalDrawIndex = (typeof DINGBIAO_FINAL_DRAW_INDEXES)[number];
+/** Legacy analysis code still uses this name; scenario identity uses FinalDrawIndex. */
+export type FinalDrawSlot = FinalDrawIndex;
+export type FinalDrawValueFractions = readonly [string, string, string];
+/** Legacy repository callers may retain this tuple name until Step 7. */
+export type FinalDrawValues = FinalDrawValueFractions;
 
 export function isDingbiaoFinalistCount(
   value: number,
@@ -18,40 +20,45 @@ export function isDingbiaoFinalistCount(
   );
 }
 
-export function isFinalDrawSlot(value: number): value is FinalDrawSlot {
-  return value === 1 || value === 2 || value === 3;
+export function isFinalDrawIndex(value: number): value is FinalDrawIndex {
+  return DINGBIAO_FINAL_DRAW_INDEXES.some((index) => index === value);
 }
 
-export interface DingbiaoQingbiaoResultInput {
+/** Legacy compatibility guard; new Dingbiao code uses isFinalDrawIndex. */
+export const isFinalDrawSlot = isFinalDrawIndex;
+
+export interface DingbiaoFinalistInput {
   candidateId: string;
   bidPrice: string;
-  netDiscountRate: string;
+  netDiscountRateFraction: string | null;
   isOurCompany: boolean;
-  finalRank: number;
+  sourceQingbiaoRank: number;
 }
 
+/** The ordered finalists are an immutable projection of one Qingbiao scenario. */
 export interface DingbiaoCalculationInput {
-  qingbiaoK2: QingbiaoK2;
-  qingbiaoResults: readonly DingbiaoQingbiaoResultInput[] | null;
+  finalists: readonly DingbiaoFinalistInput[] | null;
   maxBidPrice: string;
   nonCompetitiveFee: string;
-  finalDrawValues: FinalDrawValues;
+  finalDrawValueFractions: FinalDrawValueFractions;
 }
 
 export interface DingbiaoRankedCandidateResult {
   candidateId: string;
   bidPrice: string;
+  netDiscountRateFraction: string;
+  sourceQingbiaoRank: number;
+  isOurCompany: boolean;
   differenceToM: string;
   rank: number;
   isWinner: boolean;
 }
 
 export interface DingbiaoSimulationScenarioResult {
-  qingbiaoK2: QingbiaoK2;
   finalistCount: DingbiaoFinalistCount;
-  finalDrawSlot: FinalDrawSlot;
-  finalDrawValue: string;
-  dingbiaoK1: string;
+  finalDrawIndex: FinalDrawIndex;
+  finalDrawValueFraction: string;
+  dingbiaoK1Fraction: string;
   benchmarkPriceM: string;
   winnerCandidateId: string;
   candidates: readonly DingbiaoRankedCandidateResult[];
@@ -61,6 +68,7 @@ export interface SimulationWinRateResult {
   ourCompanyCandidateId: string | null;
   winCount: number;
   simulationCount: number;
+  /** Decimal fraction: 3/3 = 1, not 100. */
   simulationWinRate: string;
 }
 
@@ -68,8 +76,8 @@ export type DingbiaoFinalistGroupResult =
   | {
       status: "available";
       finalistCount: DingbiaoFinalistCount;
-      finalists: readonly DingbiaoQingbiaoResultInput[];
-      dingbiaoK1: string;
+      finalists: readonly DingbiaoFinalistInput[];
+      dingbiaoK1Fraction: string;
       scenarios: readonly DingbiaoSimulationScenarioResult[];
       simulationWinRate: SimulationWinRateResult;
     }
@@ -79,15 +87,32 @@ export type DingbiaoFinalistGroupResult =
       finalistCount: DingbiaoFinalistCount;
       requiredCandidateCount: number;
       availableCandidateCount: number;
+    }
+  | {
+      status: "unavailable";
+      reason: "invalid_net_discount_rate";
+      finalistCount: DingbiaoFinalistCount;
+      errors: readonly DingbiaoNetDiscountRateError[];
     };
 
 export type DingbiaoProjectNumericField =
   | "maxBidPrice"
   | "nonCompetitiveFee";
+export type DingbiaoCandidateNumericField = "bidPrice";
 
-export type DingbiaoCandidateNumericField =
-  | "bidPrice"
-  | "netDiscountRate";
+export type DingbiaoNetDiscountRateError =
+  | {
+      code: "MISSING_NET_DISCOUNT_RATE";
+      candidateId: string;
+      finalistCount: DingbiaoFinalistCount;
+      message: string;
+    }
+  | {
+      code: "INVALID_NET_DISCOUNT_RATE";
+      candidateId: string;
+      finalistCount: DingbiaoFinalistCount;
+      message: string;
+    };
 
 export type DingbiaoValidationError =
   | {
@@ -101,7 +126,7 @@ export type DingbiaoValidationError =
     }
   | {
       code: "INVALID_FINAL_DRAW_VALUE";
-      finalDrawSlot: FinalDrawSlot;
+      finalDrawIndex: FinalDrawIndex;
       message: string;
     }
   | {
@@ -111,7 +136,7 @@ export type DingbiaoValidationError =
       message: string;
     }
   | {
-      code: "INVALID_FINAL_RANK";
+      code: "INVALID_SOURCE_QINGBIAO_RANK";
       candidateId: string;
       message: string;
     }
@@ -121,29 +146,33 @@ export type DingbiaoValidationError =
       message: string;
     }
   | {
-      code: "DUPLICATE_FINAL_RANK";
-      finalRank: number;
+      code: "DUPLICATE_SOURCE_QINGBIAO_RANK";
+      sourceQingbiaoRank: number;
       message: string;
     }
   | {
       code: "MULTIPLE_OUR_COMPANIES";
       candidateIds: readonly string[];
       message: string;
+    }
+  | DingbiaoNetDiscountRateError
+  | {
+      code: "NON_POSITIVE_BENCHMARK_FACTOR";
+      finalistCount: DingbiaoFinalistCount;
+      finalDrawIndex: FinalDrawIndex;
+      dingbiaoK1Fraction: string;
+      finalDrawValueFraction: string;
+      message: string;
     };
 
 export type DingbiaoCalculationResult =
   | {
       status: "calculated";
-      qingbiaoK2: QingbiaoK2;
       groups: readonly DingbiaoFinalistGroupResult[];
     }
-  | {
-      status: "qingbiao_result_not_found";
-      qingbiaoK2: QingbiaoK2;
-    }
+  | { status: "qingbiao_result_not_found" }
   | {
       status: "validation_error";
-      qingbiaoK2: QingbiaoK2;
       errors: readonly DingbiaoValidationError[];
     };
 
@@ -151,7 +180,7 @@ export type DingbiaoFinalistSelectionResult =
   | {
       status: "available";
       finalistCount: DingbiaoFinalistCount;
-      finalists: readonly DingbiaoQingbiaoResultInput[];
+      finalists: readonly DingbiaoFinalistInput[];
     }
   | {
       status: "unavailable";
@@ -159,4 +188,35 @@ export type DingbiaoFinalistSelectionResult =
       finalistCount: DingbiaoFinalistCount;
       requiredCandidateCount: number;
       availableCandidateCount: number;
+    };
+
+export type DingbiaoK1CalculationResult =
+  | { status: "calculated"; dingbiaoK1Fraction: string }
+  | {
+      status: "invalid_net_discount_rate";
+      errors: readonly DingbiaoNetDiscountRateError[];
+    };
+
+export type FinalBenchmarkPriceResult =
+  | {
+      status: "calculated";
+      benchmarkFactor: string;
+      benchmarkPriceM: string;
+    }
+  | {
+      status: "validation_error";
+      error: Extract<
+        DingbiaoValidationError,
+        { code: "NON_POSITIVE_BENCHMARK_FACTOR" }
+      >;
+    };
+
+export type DingbiaoScenarioCalculationResult =
+  | { status: "calculated"; scenario: DingbiaoSimulationScenarioResult }
+  | {
+      status: "validation_error";
+      error: Extract<
+        DingbiaoValidationError,
+        { code: "NON_POSITIVE_BENCHMARK_FACTOR" }
+      >;
     };

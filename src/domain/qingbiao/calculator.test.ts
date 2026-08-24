@@ -26,7 +26,7 @@ describe("qingbiao formulas", () => {
   });
 
   it("calculates qingbiao K1 independently from dingbiao values", () => {
-    expect(calculateQingbiaoK1("820", "1000", "100")).toBe("20");
+    expect(calculateQingbiaoK1("820", "1000", "100")).toBe("0.2");
   });
 
   it("calculates price and total scores from only the approved fields", () => {
@@ -57,7 +57,7 @@ describe("calculateQingbiaoScenario", () => {
     }
 
     expect(result.value.referencePriceB).toBe("820");
-    expect(result.value.qingbiaoK1).toBe("20");
+    expect(result.value.qingbiaoK1).toBe("0.2");
     expect(result.value.candidates).toHaveLength(6);
 
     expect(findCandidate(result.value.candidates, "c1")).toEqual({

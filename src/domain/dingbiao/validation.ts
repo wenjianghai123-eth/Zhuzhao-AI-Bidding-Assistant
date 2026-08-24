@@ -1,15 +1,16 @@
 import Decimal from "decimal.js";
 
-import type {
-  DingbiaoCalculationInput,
-  DingbiaoCandidateNumericField,
-  DingbiaoProjectNumericField,
-  DingbiaoQingbiaoResultInput,
-  DingbiaoValidationError,
-  FinalDrawSlot,
+import {
+  DINGBIAO_FINAL_DRAW_INDEXES,
+  type DingbiaoCalculationInput,
+  type DingbiaoCandidateNumericField,
+  type DingbiaoFinalistInput,
+  type DingbiaoProjectNumericField,
+  type DingbiaoValidationError,
+  type FinalDrawIndex,
 } from "@/domain/dingbiao/types";
 
-function parseFiniteDecimal(value: string) {
+export function parseFiniteDecimal(value: string) {
   try {
     const decimal = new Decimal(value);
     return decimal.isFinite() ? decimal : null;
@@ -35,7 +36,7 @@ function validateProjectValue(
 }
 
 function validateCandidateValue(
-  candidate: DingbiaoQingbiaoResultInput,
+  candidate: DingbiaoFinalistInput,
   field: DingbiaoCandidateNumericField,
   value: string,
   errors: DingbiaoValidationError[],
@@ -53,22 +54,23 @@ function validateCandidateValue(
 }
 
 function validateFinalDrawValue(
-  finalDrawSlot: FinalDrawSlot,
-  finalDrawValue: string,
+  finalDrawIndex: FinalDrawIndex,
+  finalDrawValueFraction: string,
   errors: DingbiaoValidationError[],
 ) {
-  if (!parseFiniteDecimal(finalDrawValue)) {
+  const decimal = parseFiniteDecimal(finalDrawValueFraction);
+  if (!decimal || decimal.isNegative() || decimal.greaterThan(1)) {
     errors.push({
       code: "INVALID_FINAL_DRAW_VALUE",
-      finalDrawSlot,
-      message: `定标抽值${finalDrawSlot}必须是有效数字`,
+      finalDrawIndex,
+      message: `定标抽值${finalDrawIndex}必须是 0 到 1 之间的有效比例小数`,
     });
   }
 }
 
 export function validateDingbiaoInput(
   input: DingbiaoCalculationInput & {
-    qingbiaoResults: readonly DingbiaoQingbiaoResultInput[];
+    finalists: readonly DingbiaoFinalistInput[];
   },
 ): readonly DingbiaoValidationError[] {
   const errors: DingbiaoValidationError[] = [];
@@ -108,15 +110,28 @@ export function validateDingbiaoInput(
     });
   }
 
-  validateFinalDrawValue(1, input.finalDrawValues[0], errors);
-  validateFinalDrawValue(2, input.finalDrawValues[1], errors);
-  validateFinalDrawValue(3, input.finalDrawValues[2], errors);
+  const indexedDraws = DINGBIAO_FINAL_DRAW_INDEXES.map(
+    (finalDrawIndex, offset) => ({
+      finalDrawIndex,
+      finalDrawValueFraction: input.finalDrawValueFractions[offset],
+    }),
+  );
+  for (const { finalDrawIndex, finalDrawValueFraction } of indexedDraws) {
+    if (finalDrawValueFraction === undefined) {
+      continue;
+    }
+    validateFinalDrawValue(
+      finalDrawIndex,
+      finalDrawValueFraction,
+      errors,
+    );
+  }
 
   const candidateIds = new Set<string>();
-  const finalRanks = new Set<number>();
+  const sourceRanks = new Set<number>();
   const ourCompanyCandidateIds: string[] = [];
 
-  for (const candidate of input.qingbiaoResults) {
+  for (const candidate of input.finalists) {
     if (candidateIds.has(candidate.candidateId)) {
       errors.push({
         code: "DUPLICATE_CANDIDATE_ID",
@@ -126,20 +141,23 @@ export function validateDingbiaoInput(
     }
     candidateIds.add(candidate.candidateId);
 
-    if (!Number.isInteger(candidate.finalRank) || candidate.finalRank < 1) {
+    if (
+      !Number.isInteger(candidate.sourceQingbiaoRank) ||
+      candidate.sourceQingbiaoRank < 1
+    ) {
       errors.push({
-        code: "INVALID_FINAL_RANK",
+        code: "INVALID_SOURCE_QINGBIAO_RANK",
         candidateId: candidate.candidateId,
-        message: `候选单位 ${candidate.candidateId} 的清标综合排名必须是正整数`,
+        message: `候选单位 ${candidate.candidateId} 的清标来源排名必须是正整数`,
       });
-    } else if (finalRanks.has(candidate.finalRank)) {
+    } else if (sourceRanks.has(candidate.sourceQingbiaoRank)) {
       errors.push({
-        code: "DUPLICATE_FINAL_RANK",
-        finalRank: candidate.finalRank,
-        message: `清标综合排名 ${candidate.finalRank} 重复`,
+        code: "DUPLICATE_SOURCE_QINGBIAO_RANK",
+        sourceQingbiaoRank: candidate.sourceQingbiaoRank,
+        message: `清标来源排名 ${candidate.sourceQingbiaoRank} 重复`,
       });
     }
-    finalRanks.add(candidate.finalRank);
+    sourceRanks.add(candidate.sourceQingbiaoRank);
 
     const bidPrice = validateCandidateValue(
       candidate,
@@ -155,12 +173,6 @@ export function validateDingbiaoInput(
         message: `候选单位 ${candidate.candidateId} 的投标报价必须大于 0`,
       });
     }
-    validateCandidateValue(
-      candidate,
-      "netDiscountRate",
-      candidate.netDiscountRate,
-      errors,
-    );
 
     if (candidate.isOurCompany) {
       ourCompanyCandidateIds.push(candidate.candidateId);

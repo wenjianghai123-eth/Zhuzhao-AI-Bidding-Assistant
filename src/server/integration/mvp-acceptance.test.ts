@@ -11,7 +11,6 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { PrismaClient } from "@/generated/prisma/client";
-import type { QingbiaoScenarioSelections } from "@/domain/qingbiao";
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -313,21 +312,38 @@ describe("MVP empty-database acceptance flow", () => {
     expect(duplicatePerformanceResult.status).toBe("conflict");
     expect(await prisma.companyPerformance.count()).toBe(6);
 
-    const qingbiaoSelections: QingbiaoScenarioSelections = {
-      0: candidateIds,
-      1: [ourCandidateId, secondCandidateId, thirdCandidateId],
-      2: [fourthCandidateId, fifthCandidateId, sixthCandidateId],
-      3: [secondCandidateId, fourthCandidateId, sixthCandidateId],
-    };
-    const qingbiaoResult = await qingbiaoActions.calculateQingbiaoAction(
-      projectId,
-      { scenarioSelections: qingbiaoSelections },
-    );
+    const qingbiaoBeforeCalculation =
+      await qingbiaoRuntime.getRuntimeQingbiaoPageData(projectId);
+    expect(qingbiaoBeforeCalculation?.exclusionRules).toHaveLength(4);
+    if (!qingbiaoBeforeCalculation) {
+      throw new Error("Qingbiao page data should exist before calculation.");
+    }
+    const exclusionsByRule = [
+      [sixthCandidateId],
+      [fifthCandidateId, sixthCandidateId],
+      [fourthCandidateId],
+      [],
+    ] as const;
+    for (const [index, rule] of qingbiaoBeforeCalculation.exclusionRules.entries()) {
+      const ruleExclusions = exclusionsByRule[index];
+      if (!ruleExclusions) {
+        throw new Error("Exclusion-rule acceptance fixture is incomplete.");
+      }
+      const saveRuleResult =
+        await qingbiaoActions.saveQingbiaoExclusionRuleAction(projectId, {
+          exclusionRuleId: rule.id,
+          candidateIds: ruleExclusions,
+        });
+      expect(saveRuleResult.status).toBe("success");
+    }
+
+    const qingbiaoResult =
+      await qingbiaoActions.calculateQingbiaoAction(projectId);
     expect(qingbiaoResult.status).toBe("success");
     if (qingbiaoResult.status !== "success") {
       throw new Error(qingbiaoResult.message);
     }
-    expect(qingbiaoResult.calculation.scenarios).toHaveLength(4);
+    expect(qingbiaoResult.calculation.scenarios).toHaveLength(16);
     expect(
       new Set(
         qingbiaoResult.calculation.scenarios.map(
@@ -336,9 +352,9 @@ describe("MVP empty-database acceptance flow", () => {
       ).size,
     ).toBeGreaterThan(1);
     for (const scenario of qingbiaoResult.calculation.scenarios) {
-      expect(scenario.candidates).toHaveLength(6);
+      expect(scenario.orderedResults).toHaveLength(6);
       expect(
-        scenario.candidates
+        scenario.orderedResults
           .map((candidate) => candidate.finalRank)
           .toSorted((left, right) => left - right),
       ).toEqual([1, 2, 3, 4, 5, 6]);
@@ -346,25 +362,39 @@ describe("MVP empty-database acceptance flow", () => {
 
     const refreshedQingbiao =
       await qingbiaoRuntime.getRuntimeQingbiaoPageData(projectId);
-    expect(refreshedQingbiao?.latestCalculation?.scenarios).toHaveLength(4);
+    expect(
+      refreshedQingbiao?.calculationState.calculation?.scenarios,
+    ).toHaveLength(16);
     expect(await prisma.qingbiaoScenario.count({ where: { projectId } })).toBe(
-      4,
+      16,
     );
     expect(
       await prisma.qingbiaoResult.count({
         where: { scenario: { projectId } },
       }),
-    ).toBe(24);
+    ).toBe(96);
 
+    const sourceQingbiaoScenario =
+      qingbiaoResult.calculation.scenarios.find(
+        (scenario) =>
+          scenario.ruleIndex === 1 && scenario.qingbiaoK2Value === 1,
+      );
+    if (!sourceQingbiaoScenario) {
+      throw new Error("Expected rule 1 / K2=1 Qingbiao source scenario.");
+    }
     const dingbiaoResult = await dingbiaoActions.calculateDingbiaoAction(
       projectId,
-      { qingbiaoK2: 1 },
+      { sourceQingbiaoScenarioId: sourceQingbiaoScenario.scenarioId },
     );
     expect(dingbiaoResult.status).toBe("success");
     if (dingbiaoResult.status !== "success") {
       throw new Error(dingbiaoResult.message);
     }
-    expect(dingbiaoResult.calculation.qingbiaoK2).toBe(1);
+    expect(dingbiaoResult.calculation).toMatchObject({
+      sourceQingbiaoScenarioId: sourceQingbiaoScenario.scenarioId,
+      sourceRuleIndex: 1,
+      qingbiaoK2Value: 1,
+    });
     expect(
       dingbiaoResult.calculation.groups.map((group) => group.finalistCount),
     ).toEqual([5, 4, 3]);
@@ -375,18 +405,20 @@ describe("MVP empty-database acceptance flow", () => {
       }
       expect(group.finalists).toHaveLength(group.finalistCount);
       expect(group.scenarios).toHaveLength(3);
-      expect(group.scenarios.map((scenario) => scenario.finalDrawSlot)).toEqual([
-        1, 2, 3,
-      ]);
+      expect(
+        group.scenarios.map((scenario) => scenario.finalDrawIndex),
+      ).toEqual([1, 2, 3]);
       expect(group.simulationWinRate.simulationCount).toBe(3);
       expect(group.simulationWinRate.simulationWinRate).toMatch(
-        /^(?:0|33\.33333333333333333333|66\.66666666666666666667|100)$/,
+        /^(?:0|0\.33333333333333333333|0\.66666666666666666667|1)$/,
       );
     }
 
     const refreshedDingbiao =
       await dingbiaoRuntime.getRuntimeDingbiaoPageData(projectId);
-    expect(refreshedDingbiao?.latestCalculation?.qingbiaoK2).toBe(1);
+    expect(
+      refreshedDingbiao?.latestCalculation?.sourceQingbiaoScenarioId,
+    ).toBe(sourceQingbiaoScenario.scenarioId);
     expect(refreshedDingbiao?.latestCalculation?.groups).toHaveLength(3);
     expect(await prisma.dingbiaoScenario.count({ where: { projectId } })).toBe(
       9,
@@ -457,7 +489,7 @@ describe("MVP empty-database acceptance flow", () => {
           where: { scenario: { projectId } },
         }),
       ]);
-      expect(persistedCounts).toEqual([1, 6, 6, 4, 24, 9, 36]);
+      expect(persistedCounts).toEqual([1, 6, 6, 16, 96, 9, 36]);
     } finally {
       await freshPrisma.$disconnect();
     }

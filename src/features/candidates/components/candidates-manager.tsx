@@ -43,9 +43,9 @@ import type { CandidateListItem } from "@/features/candidates/candidate-form-sch
 import { CandidateDialog } from "@/features/candidates/components/candidate-dialog";
 import {
   formatMoney,
-  formatPercentagePoints,
   formatScore,
 } from "@/lib/formatters";
+import { formatPercentageFraction } from "@/lib/percentage";
 
 type EditorState =
   | { mode: "create" }
@@ -223,7 +223,7 @@ export function CandidatesManager({
                       {formatMoney(candidate.bidPrice)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatPercentagePoints(candidate.netDiscountRate)}
+                      {formatPercentageFraction(candidate.netDiscountRate)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatScore(candidate.trademarkScore)}

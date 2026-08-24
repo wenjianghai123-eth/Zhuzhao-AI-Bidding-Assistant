@@ -2,6 +2,27 @@
 
 本文档记录已经实现但仍需业务确认的计算口径。未经确认的规则不得扩展到清标、定标或决策排名。
 
+## Percentage Representation Contract
+
+状态：已实现，所有新增和后续改造必须遵守。
+
+数据库、domain 和 application service 中，所有真正表示百分比或比例的值统一使用任意精度 decimal fraction，并以 canonical decimal string 穿越 DTO 边界：
+
+```text
+业务含义  UI 输入  Domain / Service  Database  UI 显示
+10.38%   10.38    0.1038            0.1038    10.38%
+10%      10       0.1               0.1       10%
+1%       1        0.01              0.01      1%
+```
+
+- UI 表单只在输入边界通过 `parsePercentageInput()` 将百分点除以 100；读取后通过 `fractionToPercentagePoints()` 回填输入框。
+- 所有比例展示统一通过 `formatPercentageFraction()` 将 fraction 转成带 `%` 的文本。
+- Excel 百分比格式单元格的原始 fraction 保持不变；固定模板中明确为百分点的字段，只在字段映射边界通过 `percentagePointsToFraction()` 转换。禁止使用“值大于 1 就除以 100”的全局猜测。
+- `qingbiaoK2` 是唯一受控例外：持久化的 `0 | 1 | 2 | 3` 是场景 identity `qingbiaoK2Value`，不是 domain 计算比例。公式需要比例时必须且只能通过 `qingbiaoK2ValueToRate()` 转为 `0 | 0.01 | 0.02 | 0.03`。
+- 模拟中标率在 domain 内同样使用 `0..1` fraction；例如 2 次中标/3 次模拟为 `0.6666…`，仅展示边界转换为 `66.67%`。
+- money、rate、score 及其转换继续使用 `decimal.js`，不得使用 JavaScript 浮点数。
+- `pnpm audit:percentages` 对持久化比例字段执行只读数量级审计；它只报告疑似百分点值，不自动修改历史数据。
+
 ## 履约最近 12 季度平均分
 
 状态：临时规则，待业务确认。
@@ -46,14 +67,203 @@ Excel 中的“最近 12 季度加权平均分”尚未提供季度权重，因�
 - 不使用 JavaScript 浮点数计算评分。
 - 当前不对中间结果进行舍入；最终展示精度将在业务规则确认后统一定义。
 
-## 清标计算（Qingbiao）
+## 20260820 Qingbiao Calculation Pipeline
 
-状态：本版本已实现并由单元测试覆盖。
+状态：新版纯 Domain 已实现并由人工可复核 golden fixture 覆盖；Application、Repository 和 UI 尚未接入。
+
+新版单场景身份由 `exclusionRuleId + qingbiaoK2Value` 表达，但 Domain 不读取数据库。入口为 `calculateQingbiaoScenarioV2()`，输入只包含规则参数、候选单位、履约数据、剔除单位和场景身份，输出完整中间值、有序结果及 Top5。
+
+### 1. K1 候选集合
+
+```text
+k1Candidates = allCandidates - excludedCandidateIds
+```
+
+- `excludedCandidateIds` 必须全部属于当前候选单位，且不得重复。
+- Domain 不解释 ruleIndex 1/2/3/4 的具体业务含义，也不限制每种规则的剔除数量。
+- K1 候选集合与最终排名候选集合是两个独立概念。
+
+### 2. 净下浮率转百分点并取整
+
+每个 K1 候选单位的 `netDiscountRateFraction` 先乘以 100 转为百分点，再调用 `roundNetDiscountToIntegerPoint()` 取整。
+
+```text
+0.1038 fraction -> 10.38 points -> 10 integer points
+```
+
+当前显式舍入策略为 `HALF_UP`。这是根据中文“4 舍 5 入”采用的临时业务假设，不代表 Excel 已经明确机器舍入模式，仍待业务方确认。禁止用 `Math.round()` 隐含决定业务口径。
+
+### 3. 去重
+
+对取整后的百分点字符串去重。重复的整数百分点在 K1 样本中只计一次：
+
+```text
+10, 10, 9, 10, 9 -> 10, 9
+```
+
+### 4. 唯一值平均
+
+对唯一整数百分点求算术平均：
+
+```text
+(10 + 9) / 2 = 9.5 percentage points
+```
+
+所有求和与平均使用 `decimal.js`。
+
+### 5. qingbiaoK1Fraction
+
+百分点平均值除以 100，得到内部 fraction：
+
+```text
+9.5 points -> 0.095 fraction
+```
+
+不对 K1 平均结果增加 Excel 未指定的小数位舍入。UI 格式化不属于 Domain。
+
+### 6. qingbiaoK2Rate
+
+`qingbiaoK2Value = 0 | 1 | 2 | 3` 只是场景 identity。公式必须通过唯一入口 `qingbiaoK2ValueToRate()` 转换：
+
+```text
+0 -> 0
+1 -> 0.01
+2 -> 0.02
+3 -> 0.03
+```
+
+### 7. referencePriceB
+
+```text
+B = (1 - qingbiaoK1Fraction - qingbiaoK2Rate)
+    × (maxBidPrice - nonCompetitiveFee)
+    + nonCompetitiveFee
+```
+
+金额和比例全程使用 Decimal；本规则只适用于清标 B，不修改定标 M。
+
+### 8. 报价距离
+
+对最终排名集合中的每个候选单位计算：
+
+```text
+distance = abs(candidate.bidPrice - B)
+```
+
+### 9. 报价排名
+
+临时稳定排序规则为：
+
+1. `distance` 升序；
+2. 距离相同时，`bidPrice` 较低者优先；
+3. 距离和报价仍相同时，`candidateId` 升序。
+
+排序建立唯一连续名次，不使用随机数。
+
+### 10. 报价得分
+
+沿用既有明确规则：
+
+```text
+priceScore = totalBidPriceScore - (priceRank - 1) × rankDeduction
+```
+
+### 11. 履约得分
+
+沿用既有归一化规则：
+
+```text
+performanceScore = 10 × (Ai - Amin) / (Amax - Amin)
+```
+
+当 `Amax === Amin` 时，当前临时策略为所有排名候选单位统一记 10 分，避免 `0 / 0`。该特殊规则仍待业务确认。本步骤不定义最近 12 季度的加权权重。
+
+### 12. 综合得分
+
+```text
+totalScore = performanceScore
+           + similarExperienceScore
+           + otherScore
+           + priceScore
+```
+
+`trademarkScore` 和 `technicalScore` 不进入清标综合得分。
+
+### 13. 最终排名
+
+当前临时稳定排序规则为：
+
+1. `totalScore` 降序；
+2. 总分相同时，`priceScore` 降序；
+3. 报价得分仍相同时，`distance` 升序；
+4. 仍相同时，`candidateId` 升序。
+
+该完整并列规则未由 Excel 明确，仍待业务确认。
+
+### 14. Top5
+
+`orderedResults` 保留全部最终排名结果；`top5 = orderedResults.slice(0, 5)`。候选单位少于五家时返回实际数量，不制造占位单位，也不报错。
+
+### 排名候选集合策略
+
+Excel 没有明确“推优剔除”只影响 K1 样本，还是也取消后续排名资格。Domain 因此显式支持三种策略：
+
+- `ALL_CANDIDATES`：全部候选单位参与排名，当前默认临时策略；
+- `NON_EXCLUDED_CANDIDATES`：仅未剔除单位参与排名；
+- `EXPLICIT_CANDIDATES`：由上层明确传入排名候选 ID。
+
+默认值不代表最终业务结论。Step 5 接入 Application/UI 前必须保留该显式选择，待业务确认后再决定上层传入哪种策略。
+
+### 错误与数值边界
+
+- K1 剔除后为空：`QINGBIAO_K1_EMPTY_CANDIDATES`；
+- K1 候选全部缺少净下浮率：`QINGBIAO_K1_MISSING_NET_DISCOUNT_RATES`；
+- 排名集合为空：`QINGBIAO_RANKING_EMPTY_CANDIDATES`；
+- 剔除 ID 不属于当前候选：`QINGBIAO_INVALID_EXCLUDED_CANDIDATE`；
+- 显式排名 ID 不属于当前候选：`QINGBIAO_INVALID_RANKING_CANDIDATE`；
+- 履约缺失、非有限数字和非法项目参数均返回结构化 Domain error。
+
+Domain 不返回 `NaN`、`Infinity` 或 `undefined` 作为业务计算结果。
+
+## Step 5 Application 采用的清标策略（2026-08-24）
+
+当前根据 20260820 Excel 结构暂定：
+
+> 推优剔除仅影响清标 K1 样本，不取消单位后续报价排名、综合评分和最终排名资格；该解释仍待业务最终确认。
+
+Application 将该策略集中定义为 `QINGBIAO_APPLICATION_RANKING_POLICY`，每次调用 `calculateQingbiaoScenarioV2()` 都显式传入：
+
+```text
+excludedCandidateIds -> K1 使用 NON_EXCLUDED_CANDIDATES
+rankingCandidatePolicy.mode = ALL_CANDIDATES
+```
+
+不得依赖 `calculateQingbiaoScenarioV2()` 的默认参数，也不得在 React、Server Action 或 Repository 中复制这项策略。
+
+一次正式测算按固定顺序执行：
+
+```text
+ruleIndex 1..4
+  × qingbiaoK2Value 0..3
+  = 16 QingbiaoScenarioV2Result
+```
+
+同一规则四个 K2 的 K1 必须相同；Application 可以让纯 Domain 针对每个场景重复求值以保持单场景入口唯一，但 UI 只把它表述为“当前推优规则 K1”。
+
+正式测算要求所有 `ALL_CANDIDATES` 排名候选的必要履约数据完整。任何候选缺失任一项目类型履约时，Domain 错误由 Application 映射为含公司与缺失专业的中文结构化问题，整批不保存，绝不按 0 分继续。
+
+持久化批次还必须满足：16 个场景身份完整且不重复；场景剔除集合与数据库当前规则一致；每个场景结果覆盖项目全部候选；`metadata.rankingCandidatePolicy` 为 `ALL_CANDIDATES`；规则版本为 `qingbiao-20260820-v2`。
+
+商标优、技术优继续只展示，不进入 `totalScore`。比例仍以 fraction 通过 Domain/Repository DTO 传递，只在 UI 用 `formatPercentageFraction()` 显示。
+
+## 旧版清标兼容计算（Qingbiao MVP v1）
+
+状态：原有测试和 API 继续保留，供当前旧四场景 Application/UI 使用；不得作为新版 20260820 算法规则。
 
 ### 场景与参考报价 B
 
 - 清标固定使用 `qingbiaoK2 = 0 / 1 / 2 / 3` 四个场景。
-- `qingbiaoK2` 只标识清标场景，不与定标抽值混用。
+- `qingbiaoK2` 只标识清标场景，不与定标抽值混用，也不能直接作为公式中的 fraction 使用。
 - 每个场景独立选择用于计算参考报价的候选单位。
 
 ```text
@@ -65,10 +275,10 @@ B = 所选单位投标总价之和 / 所选单位数量
 ### 清标 K1
 
 ```text
-qingbiaoK1 = [1 - (B - 不可竞争费) / (最高投标限价 - 不可竞争费)] × 100
+qingbiaoK1Fraction = 1 - (B - 不可竞争费) / (最高投标限价 - 不可竞争费)
 ```
 
-这里的 `qingbiaoK1` 仅用于清标，不代表后续定标 K1。
+这里的 `qingbiaoK1` 仅用于清标，不代表后续定标 K1；其保存和 domain 输出单位为 fraction，例如 `20% = 0.2`。
 
 ### 履约得分
 
@@ -124,15 +334,15 @@ totalScore = performanceScore
 
 ## 定标预测（Dingbiao）
 
-状态：本版本已实现纯 domain 计算引擎、定标页面和事务持久化流程，并由单元测试及 SQLite 连续重算验证覆盖。
+状态：Step 6 已按 20260820 口径升级现有 Domain、Application、Repository 和 UI；没有建立并行 V2，也没有修改 Prisma schema。
 
 ### 清标场景与入围单位
 
-- 输入使用 `qingbiaoK2 = 0 / 1 / 2 / 3` 选择一套已存在的清标结果。
-- `qingbiaoK2` 是清标场景标识，`finalDrawValue` 是定标抽值，两者是不同概念，禁止混用。
-- 按清标结果的 `finalRank` 从小到大分别取得 Top 5、Top 4、Top 3，形成 `N=5 / N=4 / N=3` 三组。
+- 正式输入使用 `sourceQingbiaoScenarioId`，从 `getQingbiaoScenarioCatalog(projectId)` 的 16 项 current 目录选择一套具体清标来源；`qingbiaoK2` 单独不能标识来源。
+- 清标场景必须属于当前项目，使用 `qingbiao-20260820-v2` 规则版本，输入修订必须 current，且必须存在有序排名结果；missing、stale 或不可靠 legacy 结果均被阻断。
+- 按所选场景的 `finalRank` 从小到大取得有序 Top5；N=5、N=4、N=3 只能是该序列的前 5、前 4、前 3，不能由用户重录或重排。
 - 候选单位数量不足某个 N 时，仅该 N 返回 `unavailable / insufficient_candidates` 结构化状态；候选数足够的其他 N 仍可计算。
-- 选择的清标结果不存在时，整体返回 `qingbiao_result_not_found`。
+- 某个 Top N 存在缺失或非法净下浮率时，仅该 N 返回 `unavailable / invalid_net_discount_rate`；不得默认成 0。
 
 ### 定标 K1
 
@@ -142,20 +352,23 @@ totalScore = performanceScore
 dingbiaoK1 = 当前 Top N 单位净下浮率之和 / N
 ```
 
+输入和结果均为 decimal fraction。这里直接求算术平均，不执行清标 K1 的“转百分点、整数舍入、去重”步骤。
+
 ### 三个定标抽值与 M 值
 
 每个可用 N 分别与 `finalDrawValue1 / finalDrawValue2 / finalDrawValue3` 组合。三个 N 均可用时，共产生 `3 × 3 = 9` 个模拟场景。
 
 ```text
-M = (dingbiaoK1 + finalDrawValue)
-    / 100
+M = (1 - dingbiaoK1Fraction - finalDrawValueFraction)
     × (最高投标限价 - 不可竞争费)
     + 不可竞争费
 ```
 
-> 当前按照原 Excel 方案实现。由于净下浮率定义与该公式的业务含义仍需进一步确认，因此该函数必须独立封装，后续业务确认后只允许修改此 domain 函数及对应测试。
+该公式是当前正式统一口径：最新版 Excel 的 N=5 文本为 `100-K1-draw`；N=4/N=3 中缺少 `100-` 的旧文字视为模板复制错误，三个 N 必须使用同一公式。若 `1-K1-draw <= 0`，Domain 返回 `NON_POSITIVE_BENCHMARK_FACTOR` 结构化错误，不生成负数或异常 M。
 
 M 值的唯一实现入口是 `calculateFinalBenchmarkPrice()`。其他 domain 函数、应用服务和未来 React 页面均不得复制或变形实现该公式。
+
+三个抽值以 `finalDrawIndex=1/2/3` 建立身份，而不是以数值建立身份；即使抽值 1 与抽值 2 数值相同，也必须保存两套独立场景。正常 Top5 共生成 9 套；本步骤不会自动遍历 16 个来源生成 144 套。
 
 ### 差额与预测中标单位
 
@@ -171,15 +384,26 @@ difference = abs(candidate.bidPrice - M)
 
 排名第 1 的单位是该模拟场景的预测中标单位。
 
+每条 `DingbiaoResult` 保存 `candidateId`、报价快照、净下浮率快照、清标来源排名、与 M 差额、定标排名和 winner 标志，结果复核不依赖候选单位当前的报价或比例。
+
 ### 模拟中标率
 
 对同一个 N 的三个 `finalDrawValue` 场景统计我方单位中标次数：
 
 ```text
-simulationWinRate = 我方中标次数 / 3 × 100%
+simulationWinRateFraction = 我方中标次数 / 3
 ```
 
-产品界面和报告统一称“模拟中标率”。该值是当前三个离散抽值场景的模拟汇总，不称为统计学“真实中标概率”。
+domain 返回 fraction；产品界面和报告在展示边界转为百分比并统一称“模拟中标率”。该值是当前三个离散抽值场景的模拟汇总，不称为统计学“真实中标概率”。
+
+没有设置我方单位不阻断定标计算或 winner 产生；Domain 的汇总保留 `ourCompanyCandidateId=null`，页面显示“未设置我方单位”，不把 0% 冒充为已设置我方后的模拟结论。
+
+### 保存、重算与失效
+
+- 唯一身份是 `sourceQingbiaoScenarioId + finalistCount + finalDrawIndex`。
+- 重算来源 A 只删除并替换来源 A 的最多 9 条场景；来源 B 继续保留，重复重算不产生第 10 条。
+- 清标场景重算会先删除该来源旧 Top5 派生的定标结果，再替换清标结果，避免旧定标继续被当作 current。
+- 刷新页面从持久化结果恢复最后一次选择的 source、最多 9 套场景、快照结果和模拟中标率，不依赖 React 本地状态。
 
 ### 数值与舍入
 

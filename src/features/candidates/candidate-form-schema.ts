@@ -5,6 +5,10 @@ import type {
   ProjectCandidateInput,
   ProjectCandidateSnapshot,
 } from "@/domain/candidates/project-candidate";
+import {
+  fractionToPercentagePoints,
+  parsePercentageInput,
+} from "@/lib/percentage";
 
 const CANDIDATE_FORM_FIELDS = [
   "companyName",
@@ -163,9 +167,7 @@ export function toProjectCandidateInput(
   return {
     companyName: values.companyName,
     bidPrice: new Decimal(values.bidPrice).toString(),
-    netDiscountRate: new Decimal(values.netDiscountRate)
-      .dividedBy(100)
-      .toString(),
+    netDiscountRate: parsePercentageInput(values.netDiscountRate),
     trademarkScore: new Decimal(values.trademarkScore).toString(),
     technicalScore: new Decimal(values.technicalScore).toString(),
     similarExperienceScore: new Decimal(
@@ -182,9 +184,7 @@ export function toCandidateFormValues(
   return {
     companyName: candidate.companyName,
     bidPrice: new Decimal(candidate.bidPrice).toFixed(2),
-    netDiscountRate: new Decimal(candidate.netDiscountRate)
-      .times(100)
-      .toString(),
+    netDiscountRate: fractionToPercentagePoints(candidate.netDiscountRate),
     trademarkScore: new Decimal(candidate.trademarkScore).toString(),
     technicalScore: new Decimal(candidate.technicalScore).toString(),
     similarExperienceScore: new Decimal(
