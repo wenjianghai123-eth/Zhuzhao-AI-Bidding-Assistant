@@ -99,7 +99,11 @@ describe("project settings persistence mapping", () => {
       ...toProjectSettingsInput(validValues),
     };
 
-    expect(toProjectSettingsFormValues(stored)).toEqual(validValues);
+    expect(toProjectSettingsFormValues(stored)).toEqual({
+      ...validValues,
+      maxBidPrice: "8600",
+      nonCompetitiveFee: "420",
+    });
   });
 
   it("treats equivalent decimal representations and type order as unchanged", () => {

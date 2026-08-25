@@ -59,6 +59,7 @@ import {
 } from "@/domain/dingbiao";
 import { formatDateTime, formatMoney } from "@/lib/formatters";
 import { formatPercentageFraction } from "@/lib/percentage";
+import { formatK2 } from "@/lib/presentation";
 import { cn } from "@/lib/utils";
 import type {
   DingbiaoCalculationView,
@@ -118,7 +119,7 @@ function SourcePreview({
         </div>
         <div className="rounded-lg border p-3">
           <p className="text-xs text-muted-foreground">清标 K2</p>
-          <p className="mt-1 font-semibold">{scenario.qingbiaoK2Value}%</p>
+          <p className="mt-1 font-semibold">{formatK2(scenario.qingbiaoK2Value)}</p>
         </div>
         <div className="rounded-lg border p-3">
           <p className="text-xs text-muted-foreground">清标 K1</p>
@@ -584,7 +585,7 @@ export function DingbiaoManager({ initialData }: { initialData: DingbiaoPageData
               <SelectContent>
                 {initialData.qingbiaoScenarios.map((scenario) => (
                   <SelectItem key={scenario.scenarioId} value={scenario.scenarioId}>
-                    规则{scenario.ruleIndex} · K2={scenario.qingbiaoK2Value}%
+                    规则{scenario.ruleIndex} · K2={formatK2(scenario.qingbiaoK2Value)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -598,7 +599,7 @@ export function DingbiaoManager({ initialData }: { initialData: DingbiaoPageData
                   <>
                     <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
                     已锁定规则{selectedScenario.ruleIndex} / K2=
-                    {selectedScenario.qingbiaoK2Value}% 的有序结果。
+                    {formatK2(selectedScenario.qingbiaoK2Value)} 的有序结果。
                   </>
                 ) : (
                   <>
@@ -656,7 +657,7 @@ export function DingbiaoManager({ initialData }: { initialData: DingbiaoPageData
           <EmptyState
             icon={Target}
             title="尚未生成当前清标来源的定标预测"
-            description={`点击“开始定标预测”，系统将只对规则${selectedScenario.ruleIndex} / K2=${selectedScenario.qingbiaoK2Value}% 生成最多 9 套结果。`}
+            description={`点击“开始定标预测”，系统将只对规则${selectedScenario.ruleIndex} / K2=${formatK2(selectedScenario.qingbiaoK2Value)} 生成最多 9 套结果。`}
           />
         )}
       </section>

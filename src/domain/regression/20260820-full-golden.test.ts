@@ -1,9 +1,11 @@
 import Database from "better-sqlite3";
+import ExcelJS from "exceljs";
 import {
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -12,6 +14,16 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { fullGolden20260820Fixture as golden } from "@/domain/regression/fixtures/20260820-full-golden.fixture";
 import type { PrismaClient } from "@/generated/prisma/client";
+import {
+  formatK1,
+  formatMoney,
+  formatSimulationRate,
+} from "@/lib/presentation";
+import {
+  ANALYSIS_EXPORT_SHEET_NAMES,
+  createAnalysisExportWorkbook,
+  EXCEL_NUMBER_FORMATS,
+} from "@/server/exports/analysis-excel-exporter";
 
 type QingbiaoRuntimeModule =
   typeof import("@/server/application/qingbiao-runtime-service");
@@ -19,6 +31,8 @@ type DingbiaoRuntimeModule =
   typeof import("@/server/application/dingbiao-runtime-service");
 type AnalysisRuntimeModule =
   typeof import("@/server/application/analysis-runtime-service");
+type AnalysisDeliveryRuntimeModule =
+  typeof import("@/server/application/analysis-delivery-runtime-service");
 
 const repositoryRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -31,6 +45,7 @@ let prisma: PrismaClient | undefined;
 let qingbiaoRuntime: QingbiaoRuntimeModule | undefined;
 let dingbiaoRuntime: DingbiaoRuntimeModule | undefined;
 let analysisRuntime: AnalysisRuntimeModule | undefined;
+let analysisDeliveryRuntime: AnalysisDeliveryRuntimeModule | undefined;
 
 function applyMigrations(databasePath: string) {
   const database = new Database(databasePath);
@@ -65,10 +80,20 @@ function requirePrisma() {
 }
 
 function requireRuntimeModules() {
-  if (!qingbiaoRuntime || !dingbiaoRuntime || !analysisRuntime) {
+  if (
+    !qingbiaoRuntime ||
+    !dingbiaoRuntime ||
+    !analysisRuntime ||
+    !analysisDeliveryRuntime
+  ) {
     throw new Error("Golden Case runtime services were not initialized.");
   }
-  return { qingbiaoRuntime, dingbiaoRuntime, analysisRuntime };
+  return {
+    qingbiaoRuntime,
+    dingbiaoRuntime,
+    analysisRuntime,
+    analysisDeliveryRuntime,
+  };
 }
 
 function expectAt(location: string, actual: unknown, expected: unknown) {
@@ -98,17 +123,25 @@ beforeAll(async () => {
   process.env.DATABASE_URL = `file:${databasePath.replaceAll("\\", "/")}`;
   vi.resetModules();
 
-  const [databaseModule, qingbiaoModule, dingbiaoModule, analysisModule] =
+  const [
+    databaseModule,
+    qingbiaoModule,
+    dingbiaoModule,
+    analysisModule,
+    analysisDeliveryModule,
+  ] =
     await Promise.all([
       import("@/server/db/prisma"),
       import("@/server/application/qingbiao-runtime-service"),
       import("@/server/application/dingbiao-runtime-service"),
       import("@/server/application/analysis-runtime-service"),
+      import("@/server/application/analysis-delivery-runtime-service"),
     ]);
   prisma = databaseModule.prisma;
   qingbiaoRuntime = qingbiaoModule;
   dingbiaoRuntime = dingbiaoModule;
   analysisRuntime = analysisModule;
+  analysisDeliveryRuntime = analysisDeliveryModule;
 }, 30_000);
 
 afterAll(async () => {
@@ -621,9 +654,140 @@ describe("Golden Case 20260820-A full business flow", () => {
       1,
     );
 
+    expectAt(
+      "Presentation Qingbiao K1",
+      golden.expectedQingbiaoScenarios
+        .filter(({ qingbiaoK2Value }) => qingbiaoK2Value === 0)
+        .map(({ qingbiaoK1Fraction }) => formatK1(qingbiaoK1Fraction)),
+      ["10.00%", "9.00%", "11.50%", "11.00%"],
+    );
+    expectAt(
+      "Presentation Dingbiao raw/display boundary",
+      [formatK1("0.11575"), formatMoney("895.825")],
+      ["11.58%", "895.83 万元"],
+    );
+    expectAt(
+      "Presentation Analysis/Report 69/144",
+      `${formatSimulationRate(analysis.globalWinMetric.simulationWinRate)} (${analysis.globalWinMetric.ourWinCount}/${analysis.globalWinMetric.validScenarioCount})`,
+      "47.92% (69/144)",
+    );
+
+    const deliveryResult =
+      await runtime.analysisDeliveryRuntime.getRuntimeAnalysisDeliveryData(
+        golden.project.id,
+      );
+    if (deliveryResult.status !== "ready") {
+      throw new Error(
+        `首个不一致位置：Golden Excel delivery 状态为 ${deliveryResult.status}。`,
+      );
+    }
+    const exportBytes = await createAnalysisExportWorkbook(deliveryResult.data);
+    const exportPath = join(temporaryDirectory, "analysis-export.xlsx");
+    writeFileSync(exportPath, exportBytes);
+    const reparsedWorkbook = new ExcelJS.Workbook();
+    await reparsedWorkbook.xlsx.readFile(exportPath);
+    expectAt(
+      "Excel Sheet 列表",
+      reparsedWorkbook.worksheets.map(({ name }) => name),
+      [...ANALYSIS_EXPORT_SHEET_NAMES],
+    );
+
+    const requireSheet = (name: string) => {
+      const sheet = reparsedWorkbook.getWorksheet(name);
+      if (!sheet) {
+        throw new Error(`首个不一致位置：Excel Sheet ${name} 缺失。`);
+      }
+      return sheet;
+    };
+    const qingbiaoSummarySheet = requireSheet("清标场景摘要");
+    const qingbiaoDetailSheet = requireSheet("清标全场景");
+    const dingbiaoSummarySheet = requireSheet("定标场景摘要");
+    const dingbiaoDetailSheet = requireSheet("定标全场景");
+    expectAt(
+      "Excel 全场景行数",
+      [
+        qingbiaoSummarySheet.actualRowCount,
+        qingbiaoDetailSheet.actualRowCount,
+        dingbiaoSummarySheet.actualRowCount,
+        dingbiaoDetailSheet.actualRowCount,
+      ],
+      [17, 97, 145, 577],
+    );
+
+    const candidateRateCell = requireSheet("候选单位").getCell("E2");
+    expect(typeof candidateRateCell.value).toBe("number");
+    expect(candidateRateCell.value).toBeCloseTo(
+      Number(golden.candidates[0].netDiscountRateFraction),
+      15,
+    );
+    expectAt(
+      "Excel 候选单位百分比 Number Format",
+      candidateRateCell.numFmt,
+      EXCEL_NUMBER_FORMATS.percentage,
+    );
+
+    const detailedDingbiaoRow = dingbiaoSummarySheet
+      .getRows(2, dingbiaoSummarySheet.actualRowCount - 1)
+      ?.find(
+        (row) =>
+          row.getCell(3).value === "规则2" &&
+          row.getCell(4).value === 0.01 &&
+          row.getCell(5).value === 4 &&
+          row.getCell(6).value === 1,
+      );
+    if (!detailedDingbiaoRow) {
+      throw new Error("首个不一致位置：Excel 规则2/K2=1%/N4/抽值1 缺失。");
+    }
+    expectAt(
+      "Excel Dingbiao presentation cells",
+      [
+        detailedDingbiaoRow.getCell(8).value,
+        detailedDingbiaoRow.getCell(8).numFmt,
+        detailedDingbiaoRow.getCell(9).value,
+        detailedDingbiaoRow.getCell(9).numFmt,
+      ],
+      [0.11575, EXCEL_NUMBER_FORMATS.percentage, 895.83, EXCEL_NUMBER_FORMATS.money],
+    );
+
+    const analysisRateRow = requireSheet("全场景分析")
+      .getRows(2, requireSheet("全场景分析").actualRowCount - 1)
+      ?.find((row) => row.getCell(2).value === "全场景模拟中标率");
+    if (!analysisRateRow) {
+      throw new Error("首个不一致位置：Excel 全场景模拟中标率缺失。");
+    }
+    expect(analysisRateRow.getCell(3).value).toBeCloseTo(69 / 144, 15);
+    expectAt(
+      "Excel Analysis 69/144 value/format/display",
+      [
+        analysisRateRow.getCell(3).numFmt,
+        analysisRateRow.getCell(4).value,
+        analysisRateRow.getCell(5).value,
+        analysisRateRow.getCell(6).value,
+      ],
+      [EXCEL_NUMBER_FORMATS.percentage, 69, 144, "47.92%"],
+    );
+
+    const canonicalMRow = requireSheet("计算快照_审计")
+      .getRows(2, requireSheet("计算快照_审计").actualRowCount - 1)
+      ?.find(
+        (row) =>
+          row.getCell(4).value === "benchmarkPriceM" &&
+          row.getCell(5).value === "895.825",
+      );
+    if (!canonicalMRow) {
+      throw new Error("首个不一致位置：Excel canonical M=895.825 缺失。");
+    }
+    expectAt(
+      "Excel canonical audit text format",
+      canonicalMRow.getCell(5).numFmt,
+      EXCEL_NUMBER_FORMATS.text,
+    );
+
     console.log("Qingbiao 16/16 matched");
     console.log("Dingbiao 144/144 matched");
     console.log("Analysis matched");
+    console.log("Presentation matched");
+    console.log("Excel workbook reparse matched");
     console.log("Full Business Golden: PASS");
     console.log("Status PASS");
   }, 120_000);

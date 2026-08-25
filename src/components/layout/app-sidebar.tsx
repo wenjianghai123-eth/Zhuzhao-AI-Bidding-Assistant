@@ -265,7 +265,7 @@ export function AppSidebarContent({ onNavigate }: AppSidebarContentProps) {
 
 export function AppSidebar() {
   return (
-    <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 border-r border-sidebar-border lg:block">
+    <aside className="print-hidden fixed inset-y-0 left-0 z-40 hidden w-64 border-r border-sidebar-border lg:block">
       <AppSidebarContent />
     </aside>
   );

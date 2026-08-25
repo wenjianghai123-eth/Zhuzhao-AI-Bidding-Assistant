@@ -18,9 +18,9 @@ describe("percentage representation contract", () => {
     expect(fractionToPercentagePoints("0.1038")).toBe("10.38");
   });
 
-  it("formats fractions as percentages without fixed trailing zeroes", () => {
+  it("formats fractions using the provisional two-decimal presentation contract", () => {
     expect(formatPercentageFraction("0.1038")).toBe("10.38%");
-    expect(formatPercentageFraction("0.01")).toBe("1%");
+    expect(formatPercentageFraction("0.01")).toBe("1.00%");
     expect(formatPercentageFraction("0.10385")).toBe("10.39%");
   });
 

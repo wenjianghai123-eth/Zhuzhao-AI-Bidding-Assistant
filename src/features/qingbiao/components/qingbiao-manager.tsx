@@ -54,6 +54,7 @@ import {
   formatScore,
 } from "@/lib/formatters";
 import { formatPercentageFraction } from "@/lib/percentage";
+import { formatK2 } from "@/lib/presentation";
 import { cn } from "@/lib/utils";
 import type {
   QingbiaoCandidatePageData,
@@ -221,7 +222,7 @@ function ScenarioMetrics({ scenario }: { scenario: SavedQingbiaoScenarioSnapshot
         <CardContent>
           <p className="text-xs text-muted-foreground">清标 K2</p>
           <p className="mt-2 text-xl font-semibold tabular-nums">
-            {scenario.qingbiaoK2Value}%
+            {formatK2(scenario.qingbiaoK2Value)}
           </p>
         </CardContent>
       </Card>
@@ -300,7 +301,7 @@ function ScenarioResult({ scenario }: { scenario: SavedQingbiaoScenarioSnapshot 
       <Card>
         <CardHeader className="border-b">
           <CardTitle>
-            规则{scenario.ruleIndex} · K2={scenario.qingbiaoK2Value}% 测算明细
+            规则{scenario.ruleIndex} · K2={formatK2(scenario.qingbiaoK2Value)} 测算明细
           </CardTitle>
           <CardDescription>
             商标优、技术优仅展示，当前不计入清标综合得分。
@@ -430,7 +431,7 @@ function ScenarioOverview({
                       规则{scenario.ruleIndex}
                     </TableCell>
                     <TableCell className="text-center tabular-nums">
-                      {scenario.qingbiaoK2Value}%
+                      {formatK2(scenario.qingbiaoK2Value)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatPercentageFraction(
@@ -515,7 +516,7 @@ function ScenarioNavigator({
                       key={qingbiaoK2Value}
                       value={String(qingbiaoK2Value)}
                     >
-                      K2={qingbiaoK2Value}%
+                      K2={formatK2(qingbiaoK2Value)}
                     </TabsTrigger>
                   ))}
                 </TabsList>

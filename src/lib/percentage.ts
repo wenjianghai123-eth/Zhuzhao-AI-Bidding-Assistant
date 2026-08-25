@@ -1,6 +1,6 @@
 import Decimal from "decimal.js";
 
-const EMPTY_PERCENTAGE = "—";
+import { formatPercentageFraction as formatPresentationPercentageFraction } from "@/lib/presentation";
 
 function requireFiniteDecimal(value: string, label: string) {
   const trimmedValue = value.trim();
@@ -21,19 +21,6 @@ function requireFiniteDecimal(value: string, label: string) {
     throw new RangeError(`${label} must be a finite decimal string.`, {
       cause: error,
     });
-  }
-}
-
-function parseFiniteDecimal(value: string | null | undefined) {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return null;
-  }
-
-  try {
-    const decimal = new Decimal(value);
-    return decimal.isFinite() ? decimal : null;
-  } catch {
-    return null;
   }
 }
 
@@ -60,14 +47,5 @@ export function parsePercentageInput(percentagePointsInput: string): string {
 export function formatPercentageFraction(
   percentageFraction: string | null | undefined,
 ): string {
-  const decimal = parseFiniteDecimal(percentageFraction);
-  if (!decimal) {
-    return EMPTY_PERCENTAGE;
-  }
-
-  const percentagePoints = decimal
-    .times(100)
-    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-    .toString();
-  return `${percentagePoints}%`;
+  return formatPresentationPercentageFraction(percentageFraction);
 }

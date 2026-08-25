@@ -4,8 +4,10 @@ import {
   AlertTriangle,
   BarChart3,
   CheckCircle2,
+  Download,
   LoaderCircle,
   Play,
+  Printer,
   Target,
   Trophy,
 } from "lucide-react";
@@ -45,8 +47,9 @@ import type {
   QingbiaoSourceAnalysis,
   ScenarioAnalysisRecord,
 } from "@/domain/analysis";
-import { formatMoney } from "@/lib/formatters";
+import { formatMoney, formatScore } from "@/lib/formatters";
 import { formatPercentageFraction } from "@/lib/percentage";
+import { formatK2 } from "@/lib/presentation";
 
 type CalculationState = "not_calculated" | "incomplete" | "stale" | "current";
 
@@ -69,7 +72,7 @@ function rateText(metric: AnalysisWinMetric) {
 }
 
 function sourceLabel(source: QingbiaoSourceAnalysis) {
-  return `规则 ${source.ruleIndex} / K2=${source.qingbiaoK2Value}%`;
+  return `规则 ${source.ruleIndex} / K2=${formatK2(source.qingbiaoK2Value)}`;
 }
 
 function StateBadge({ state }: { state: CalculationState }) {
@@ -147,7 +150,7 @@ function DimensionTable({
                 </TableCell>
                 <TableCell>
                   {item.qingbiaoRankStatistics
-                    ? `最佳 ${item.qingbiaoRankStatistics.bestRank ?? "—"} / 最差 ${item.qingbiaoRankStatistics.worstRank ?? "—"} / 平均 ${item.qingbiaoRankStatistics.averageRank ?? "—"}`
+                    ? `最佳 ${item.qingbiaoRankStatistics.bestRank ?? "—"} / 最差 ${item.qingbiaoRankStatistics.worstRank ?? "—"} / 平均 ${formatScore(item.qingbiaoRankStatistics.averageRank)}`
                     : "—"}
                 </TableCell>
               </TableRow>
@@ -289,7 +292,7 @@ function ScenarioDetails({ analysis }: { analysis: DecisionAnalysis }) {
           <FilterSelect value={k2} onValueChange={setK2} label="清标 K2">
             {[0, 1, 2, 3].map((value) => (
               <SelectItem key={value} value={value.toString()}>
-                K2={value}%
+                K2={formatK2(value)}
               </SelectItem>
             ))}
           </FilterSelect>
@@ -381,7 +384,7 @@ function ScenarioRow({ record }: { record: ScenarioAnalysisRecord }) {
   return (
     <TableRow>
       <TableCell className="whitespace-nowrap">
-        规则 {record.ruleIndex} / K2={record.qingbiaoK2Value}%
+        规则 {record.ruleIndex} / K2={formatK2(record.qingbiaoK2Value)}
       </TableCell>
       <TableCell className="whitespace-nowrap">
         N={record.finalistCount} / {record.finalDrawIndex}
@@ -427,6 +430,10 @@ export function AnalysisDashboard(props: AnalysisDashboardProps) {
   const canRun =
     qingbiaoState === "current" &&
     currentQingbiaoScenarioCount === requiredQingbiaoScenarioCount;
+  const canExport =
+    qingbiaoState === "current" &&
+    dingbiaoState === "current" &&
+    currentDingbiaoScenarioCount === expectedValidDingbiaoScenarioCount;
 
   function runAllScenarios() {
     if (!canRun) {
@@ -465,6 +472,29 @@ export function AnalysisDashboard(props: AnalysisDashboardProps) {
         description={`汇总“${projectName}”当前 16 套清标来源及已保存的定标结果，不在分析层重算业务公式。`}
         actions={
           <div className="flex gap-2">
+            {canExport ? (
+              <Button variant="outline" asChild>
+                <a href={`/api/projects/${projectId}/analysis/export`}>
+                  <Download />
+                  导出分析结果
+                </a>
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                disabled
+                title="当前分析结果已过期或不完整，请重新完成全场景测算。"
+              >
+                <Download />
+                导出分析结果
+              </Button>
+            )}
+            <Button variant="outline" asChild>
+              <Link href={`/projects/${projectId}/report`}>
+                <Printer />
+                打印分析报告
+              </Link>
+            </Button>
             <Button variant="outline" asChild>
               <Link href={`/projects/${projectId}/dingbiao`}>查看单场景定标</Link>
             </Button>
@@ -623,7 +653,7 @@ export function AnalysisDashboard(props: AnalysisDashboardProps) {
           )}
           {analysis.qingbiaoRankStatistics ? (
             <p className="mt-4 text-sm text-muted-foreground">
-              参与排名 {analysis.qingbiaoRankStatistics.participatingSourceCount} 套；最佳 {analysis.qingbiaoRankStatistics.bestRank ?? "—"}，最差 {analysis.qingbiaoRankStatistics.worstRank ?? "—"}，平均 {analysis.qingbiaoRankStatistics.averageRank ?? "—"}。
+              参与排名 {analysis.qingbiaoRankStatistics.participatingSourceCount} 套；最佳 {analysis.qingbiaoRankStatistics.bestRank ?? "—"}，最差 {analysis.qingbiaoRankStatistics.worstRank ?? "—"}，平均 {formatScore(analysis.qingbiaoRankStatistics.averageRank)}。
             </p>
           ) : null}
         </CardContent>

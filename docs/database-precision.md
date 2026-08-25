@@ -24,9 +24,11 @@
 
 ### C. Presentation precision
 
-- 页面、报表和 Excel 最终显示几位仍是待确认的产品规则。
-- 本次不调整 percentage formatter，不对 K1、B、M 或得分强行保留固定小数位。
-- “UI 显示两位”不等于“Domain 只计算两位”，也不等于“数据库只保存两位”。
+- 页面、打印报告和业务 Excel 当前执行集中配置的暂行 Presentation Contract：金额、比例百分点和分数均显示两位，排名显示整数，舍入模式为 Decimal.js `ROUND_HALF_UP`。
+- 该位数仍待业务方最终签字；只允许在 `src/lib/presentation.ts` 的集中配置中调整，不得改变 Domain 或数据库原始值。
+- 业务 Excel 中金额/分数写入经过 Presentation Contract 舍入的 numeric value；比例写入原始 decimal fraction numeric value，并应用 `0.00%` Number Format。
+- `计算快照_审计` Sheet 把 canonical decimal 按文本写入，用于逐位复核，不受 Excel IEEE-754 或展示 round 影响。
+- “UI 显示两位”不等于“Domain 只计算两位”，也不等于“数据库只保存两位”。完整规则见 `docs/presentation-contract.md`。
 
 ## 3. Decimal 字段审计
 

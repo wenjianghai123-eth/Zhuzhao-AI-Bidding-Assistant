@@ -130,3 +130,58 @@
     @apply font-sans;
     }
 }
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    background: white !important;
+    color: black !important;
+    print-color-adjust: exact;
+  }
+
+  .print-hidden {
+    display: none !important;
+  }
+
+  .print-shell-content {
+    min-height: auto !important;
+    padding-left: 0 !important;
+  }
+
+  .print-main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  .analysis-report {
+    gap: 0 !important;
+  }
+
+  .report-cover {
+    display: flex;
+    min-height: 260mm;
+    flex-direction: column;
+    justify-content: center;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .print-card {
+    margin-bottom: 6mm;
+    break-inside: avoid-page;
+    box-shadow: none !important;
+  }
+
+  table thead {
+    display: table-header-group;
+  }
+
+  table tr {
+    break-inside: avoid-page;
+  }
+}

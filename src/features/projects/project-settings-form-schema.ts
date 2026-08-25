@@ -11,6 +11,7 @@ import {
   fractionToPercentagePoints,
   parsePercentageInput,
 } from "@/lib/percentage";
+import { preserveEditableDecimal } from "@/lib/presentation";
 
 export const PROJECT_TYPE_OPTIONS: readonly {
   value: ProjectTypeValue;
@@ -212,8 +213,8 @@ export function toProjectSettingsFormValues(
 ): ProjectSettingsFormValues {
   return {
     name: project.name,
-    maxBidPrice: new Decimal(project.maxBidPrice).toFixed(2),
-    nonCompetitiveFee: new Decimal(project.nonCompetitiveFee).toFixed(2),
+    maxBidPrice: preserveEditableDecimal(project.maxBidPrice),
+    nonCompetitiveFee: preserveEditableDecimal(project.nonCompetitiveFee),
     projectTypes: [...project.projectTypes],
     totalBidPriceScore: new Decimal(project.totalBidPriceScore).toString(),
     rankDeduction: new Decimal(project.rankDeduction).toString(),

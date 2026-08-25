@@ -9,6 +9,7 @@ import {
   fractionToPercentagePoints,
   parsePercentageInput,
 } from "@/lib/percentage";
+import { preserveEditableDecimal } from "@/lib/presentation";
 
 const CANDIDATE_FORM_FIELDS = [
   "companyName",
@@ -183,7 +184,7 @@ export function toCandidateFormValues(
 ): CandidateFormValues {
   return {
     companyName: candidate.companyName,
-    bidPrice: new Decimal(candidate.bidPrice).toFixed(2),
+    bidPrice: preserveEditableDecimal(candidate.bidPrice),
     netDiscountRate: fractionToPercentagePoints(candidate.netDiscountRate),
     trademarkScore: new Decimal(candidate.trademarkScore).toString(),
     technicalScore: new Decimal(candidate.technicalScore).toString(),
