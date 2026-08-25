@@ -28,6 +28,7 @@ import { ensureQingbiaoExclusionRules } from "@/server/application/qingbiao-excl
 import { calculateAllDingbiaoScenarios } from "@/server/application/global-dingbiao-service";
 import type { createPrismaAnalysisRepository } from "@/server/repositories/analysis-repository";
 import type { createPrismaDingbiaoRepository } from "@/server/repositories/dingbiao-repository";
+import type { createPrismaProjectCandidateRepository } from "@/server/repositories/project-candidate-repository";
 import type { createPrismaQingbiaoExclusionRuleRepository } from "@/server/repositories/qingbiao-exclusion-rule-repository";
 import type { createPrismaQingbiaoRepository } from "@/server/repositories/qingbiao-repository";
 
@@ -62,6 +63,9 @@ let defaultPrismaClient: PrismaClient | undefined;
 let createDingbiaoRepository:
   | typeof createPrismaDingbiaoRepository
   | undefined;
+let createProjectCandidateRepository:
+  | typeof createPrismaProjectCandidateRepository
+  | undefined;
 let createAnalysisRepository:
   | typeof createPrismaAnalysisRepository
   | undefined;
@@ -84,6 +88,13 @@ function requireDingbiaoRepositoryFactory() {
     throw new Error("Dingbiao repository factory was not initialized.");
   }
   return createDingbiaoRepository;
+}
+
+function requireProjectCandidateRepositoryFactory() {
+  if (!createProjectCandidateRepository) {
+    throw new Error("Project-candidate repository factory was not initialized.");
+  }
+  return createProjectCandidateRepository;
 }
 
 function requireAnalysisRepositoryFactory() {
@@ -418,6 +429,7 @@ beforeAll(async () => {
   const [
     analysisModule,
     dingbiaoModule,
+    projectCandidateModule,
     exclusionRuleModule,
     qingbiaoModule,
     databaseModule,
@@ -425,12 +437,15 @@ beforeAll(async () => {
     await Promise.all([
       import("@/server/repositories/analysis-repository"),
       import("@/server/repositories/dingbiao-repository"),
+      import("@/server/repositories/project-candidate-repository"),
       import("@/server/repositories/qingbiao-exclusion-rule-repository"),
       import("@/server/repositories/qingbiao-repository"),
       import("@/server/db/prisma"),
     ]);
   createAnalysisRepository = analysisModule.createPrismaAnalysisRepository;
   createDingbiaoRepository = dingbiaoModule.createPrismaDingbiaoRepository;
+  createProjectCandidateRepository =
+    projectCandidateModule.createPrismaProjectCandidateRepository;
   createExclusionRuleRepository =
     exclusionRuleModule.createPrismaQingbiaoExclusionRuleRepository;
   createQingbiaoRepository = qingbiaoModule.createPrismaQingbiaoRepository;
@@ -521,6 +536,71 @@ describe("qingbiao exclusion rule persistence", () => {
         },
       }),
     ).rejects.toThrow();
+  });
+
+  it("rejects cross-project rule and candidate IDs without changing either project", async () => {
+    await createOtherProjectDingbiaoFixture();
+    const { repository, rules } = await ensureRules();
+    const firstRule = rules[0];
+    if (!firstRule) {
+      throw new Error("Expected the first project rule.");
+    }
+
+    await expect(
+      repository.replaceExcludedCandidates({
+        projectId,
+        exclusionRuleId: "other-rule-1",
+        candidateIds: ["other-c1"],
+      }),
+    ).resolves.toEqual({ status: "exclusion_rule_not_found" });
+    await expect(
+      repository.replaceExcludedCandidates({
+        projectId,
+        exclusionRuleId: firstRule.id,
+        candidateIds: ["other-c1"],
+      }),
+    ).resolves.toEqual({ status: "candidate_project_mismatch" });
+    expect(await repository.findExcludedCandidateIds(firstRule.id)).toEqual(
+      [],
+    );
+    expect(
+      await repository.findExcludedCandidateIds("other-rule-1"),
+    ).toEqual([]);
+  });
+});
+
+describe("project candidate scope", () => {
+  it("rejects update, delete and set-our-company with a candidate from another project", async () => {
+    const otherProjectId = await createOtherProjectDingbiaoFixture();
+    const repository =
+      requireProjectCandidateRepositoryFactory()(requireClient());
+    const original = await repository.findById(otherProjectId, "other-c1");
+    if (!original) {
+      throw new Error("Expected the other-project candidate fixture.");
+    }
+    const crossProjectInput = {
+      companyName: "越权修改不应成功",
+      bidPrice: "1",
+      netDiscountRate: "0.01",
+      trademarkScore: "0",
+      technicalScore: "0",
+      similarExperienceScore: "0",
+      otherScore: "0",
+      isOurCompany: true,
+    };
+
+    await expect(
+      repository.update(projectId, "other-c1", crossProjectInput),
+    ).resolves.toBe(false);
+    await expect(repository.delete(projectId, "other-c1")).resolves.toBe(
+      false,
+    );
+    await expect(
+      repository.setAsOurCompany(projectId, "other-c1"),
+    ).resolves.toBe(false);
+    expect(await repository.findById(otherProjectId, "other-c1")).toEqual(
+      original,
+    );
   });
 });
 
@@ -882,6 +962,45 @@ describe("dingbiao source scenario and draw-index identity", () => {
     expect(finalistSnapshot?.sourceQingbiaoRank).toBe(1);
     expect(finalistSnapshot?.bidPrice.toString()).toBe("800");
     expect(finalistSnapshot?.netDiscountRateSnapshot?.toString()).toBe("0.1");
+  });
+
+  it("rejects a source scenario from another project and preserves its results", async () => {
+    await createSixteenQingbiaoScenarios();
+    const otherProjectId = await createOtherProjectDingbiaoFixture();
+    const repository = requireDingbiaoRepositoryFactory()(requireClient());
+    const scenarios = ([5, 4, 3] as const).flatMap((finalistCount) =>
+      ([1, 2, 3] as const).map((finalDrawIndex) =>
+        dingbiaoScenarioFixture({ finalistCount, finalDrawIndex }),
+      ),
+    );
+
+    await expect(
+      repository.saveCalculation({
+        projectId,
+        sourceQingbiaoScenarioId: "other-qingbiao-source",
+        qingbiaoK2Value: 0,
+        expectedProjectInputRevision: 1,
+        expectedQingbiaoInputRevision: 1,
+        ruleVersion: DINGBIAO_RULE_VERSION,
+        scenarios,
+      }),
+    ).resolves.toEqual({ status: "qingbiao_revision_conflict" });
+    await expect(
+      repository.clearCalculationsForSources({
+        projectId,
+        sourceQingbiaoScenarioIds: ["other-qingbiao-source"],
+        expectedProjectInputRevision: 1,
+        expectedQingbiaoInputRevision: 1,
+      }),
+    ).resolves.toEqual({ status: "invalid_source_set" });
+    expect(
+      await requireClient().dingbiaoScenario.count({
+        where: { projectId: otherProjectId },
+      }),
+    ).toBe(1);
+    expect(
+      await requireClient().dingbiaoScenario.count({ where: { projectId } }),
+    ).toBe(0);
   });
 });
 

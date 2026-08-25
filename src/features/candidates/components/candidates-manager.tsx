@@ -45,7 +45,7 @@ import {
   formatMoney,
   formatScore,
 } from "@/lib/formatters";
-import { formatPercentageFraction } from "@/lib/percentage";
+import { formatPercentagePoints } from "@/lib/presentation";
 
 type EditorState =
   | { mode: "create" }
@@ -223,7 +223,7 @@ export function CandidatesManager({
                       {formatMoney(candidate.bidPrice)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatPercentageFraction(candidate.netDiscountRate)}
+                      {formatPercentagePoints(candidate.netDiscountRate)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatScore(candidate.trademarkScore)}

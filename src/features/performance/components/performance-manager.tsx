@@ -128,7 +128,7 @@ export function PerformanceManager({
     <div className="space-y-6">
       <PageHeader
         eyebrow="Data Center"
-        title="履约数据库"
+        title="履约信息"
         description="按企业、项目类型和季度维护履约记录，为项目测算提供统一数据源。"
         actions={
           <Button type="button" onClick={() => setEditor({ mode: "create" })}>

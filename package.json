@@ -10,6 +10,7 @@
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "tsx scripts/run-e2e.ts",
     "test:acceptance": "vitest run src/server/integration/mvp-acceptance.test.ts",
     "audit:percentages": "tsx scripts/audit-percentages.ts",
     "postinstall": "prisma generate",
@@ -30,6 +31,7 @@
     "verify:presentation": "vitest run src/lib/presentation.test.ts src/lib/formatters.test.ts src/lib/percentage.test.ts --reporter=verbose",
     "verify:excel-export": "vitest run src/server/exports/analysis-excel-exporter.test.ts src/server/application/analysis-delivery-service.test.ts src/domain/regression/20260820-full-golden.test.ts --reporter=verbose",
     "verify:excel-import": "tsx scripts/verify-excel-import-flow.ts",
+    "verify:release": "tsx scripts/verify-release.ts",
     "db:studio": "prisma studio"
   },
   "dependencies": {
@@ -53,6 +55,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^20",

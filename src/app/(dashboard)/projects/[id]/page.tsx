@@ -100,7 +100,7 @@ export default async function ProjectOverviewPage({
       label: "我方单位",
       description: project.hasOurCompany
         ? "已设置我方单位"
-        : "尚未设置我方单位，决策分析将不可用",
+        : "尚未设置我方单位，模拟中标率将显示为未设置",
       ready: project.hasOurCompany,
       warning: !project.hasOurCompany,
       icon: ShieldCheck,
@@ -219,13 +219,13 @@ export default async function ProjectOverviewPage({
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">清标场景</span>
                 <span className="font-medium tabular-nums">
-                  {project.currentQingbiaoScenarioCount} / 4
+                  {project.currentQingbiaoScenarioCount} / 16
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">定标预测</span>
                 <span className="font-medium tabular-nums">
-                  {project.currentDingbiaoScenarioCount} / 9
+                  {project.currentDingbiaoScenarioCount} / 144
                 </span>
               </div>
             </div>

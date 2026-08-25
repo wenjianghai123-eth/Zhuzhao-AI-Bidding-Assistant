@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   BarChart3,
   CheckCircle2,
-  Download,
   LoaderCircle,
   Play,
   Printer,
@@ -12,7 +11,14 @@ import {
   Trophy,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState, useTransition, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import {
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type ReactNode,
+} from "react";
 
 import { runGlobalAnalysisAction } from "@/app/(dashboard)/projects/[id]/analysis/actions";
 import { PageHeader } from "@/components/layout/page-header";
@@ -50,6 +56,7 @@ import type {
 import { formatMoney, formatScore } from "@/lib/formatters";
 import { formatPercentageFraction } from "@/lib/percentage";
 import { formatK2 } from "@/lib/presentation";
+import { AnalysisExportButton } from "@/features/analysis/components/analysis-export-button";
 
 type CalculationState = "not_calculated" | "incomplete" | "stale" | "current";
 
@@ -413,6 +420,7 @@ function ScenarioRow({ record }: { record: ScenarioAnalysisRecord }) {
 }
 
 export function AnalysisDashboard(props: AnalysisDashboardProps) {
+  const router = useRouter();
   const {
     projectId,
     projectName,
@@ -425,6 +433,7 @@ export function AnalysisDashboard(props: AnalysisDashboardProps) {
     analysis,
   } = props;
   const [isPending, startTransition] = useTransition();
+  const operationLock = useRef(false);
   const [runMessage, setRunMessage] = useState<string | null>(null);
   const [runFailures, setRunFailures] = useState<readonly string[]>([]);
   const canRun =
@@ -436,6 +445,9 @@ export function AnalysisDashboard(props: AnalysisDashboardProps) {
     currentDingbiaoScenarioCount === expectedValidDingbiaoScenarioCount;
 
   function runAllScenarios() {
+    if (operationLock.current || isPending) {
+      return;
+    }
     if (!canRun) {
       setRunMessage(
         `当前清标结果不完整（${currentQingbiaoScenarioCount}/${requiredQingbiaoScenarioCount}）。`,
@@ -449,14 +461,22 @@ export function AnalysisDashboard(props: AnalysisDashboardProps) {
     ) {
       return;
     }
+    operationLock.current = true;
     setRunMessage(null);
     setRunFailures([]);
     startTransition(async () => {
-      const result = await runGlobalAnalysisAction(projectId);
-      setRunMessage(result.message);
-      setRunFailures(
-        result.status === "partial_failure" ? result.failures : [],
-      );
+      try {
+        const result = await runGlobalAnalysisAction(projectId);
+        setRunMessage(result.message);
+        setRunFailures(
+          result.status === "partial_failure" ? result.failures : [],
+        );
+        router.refresh();
+      } catch {
+        setRunMessage("全场景分析运行失败，请检查网络后重试。");
+      } finally {
+        operationLock.current = false;
+      }
     });
   }
 
@@ -472,23 +492,7 @@ export function AnalysisDashboard(props: AnalysisDashboardProps) {
         description={`汇总“${projectName}”当前 16 套清标来源及已保存的定标结果，不在分析层重算业务公式。`}
         actions={
           <div className="flex gap-2">
-            {canExport ? (
-              <Button variant="outline" asChild>
-                <a href={`/api/projects/${projectId}/analysis/export`}>
-                  <Download />
-                  导出分析结果
-                </a>
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                disabled
-                title="当前分析结果已过期或不完整，请重新完成全场景测算。"
-              >
-                <Download />
-                导出分析结果
-              </Button>
-            )}
+            <AnalysisExportButton projectId={projectId} enabled={canExport} />
             <Button variant="outline" asChild>
               <Link href={`/projects/${projectId}/report`}>
                 <Printer />

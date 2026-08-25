@@ -3,6 +3,7 @@ import type {
   ProjectCandidateSnapshot,
   ProjectCandidatesSnapshot,
 } from "@/domain/candidates/project-candidate";
+import type { PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/server/db/prisma";
 
 export interface ProjectCandidateRepository {
@@ -55,9 +56,12 @@ function toSnapshot(candidate: {
   };
 }
 
-export const prismaProjectCandidateRepository: ProjectCandidateRepository = {
+export function createPrismaProjectCandidateRepository(
+  client: PrismaClient,
+): ProjectCandidateRepository {
+  return {
   async getProjectCandidates(projectId) {
-    const project = await prisma.project.findUnique({
+    const project = await client.project.findUnique({
       where: { id: projectId },
       select: {
         id: true,
@@ -80,7 +84,7 @@ export const prismaProjectCandidateRepository: ProjectCandidateRepository = {
   },
 
   async projectExists(projectId) {
-    const project = await prisma.project.findUnique({
+    const project = await client.project.findUnique({
       where: { id: projectId },
       select: { id: true },
     });
@@ -88,14 +92,14 @@ export const prismaProjectCandidateRepository: ProjectCandidateRepository = {
   },
 
   async findById(projectId, candidateId) {
-    const candidate = await prisma.projectCandidate.findFirst({
+    const candidate = await client.projectCandidate.findFirst({
       where: { id: candidateId, projectId },
     });
     return candidate ? toSnapshot(candidate) : null;
   },
 
   async companyNameExists(projectId, companyName, excludeCandidateId) {
-    const candidate = await prisma.projectCandidate.findFirst({
+    const candidate = await client.projectCandidate.findFirst({
       where:
         excludeCandidateId === undefined
           ? { projectId, companyName }
@@ -110,7 +114,7 @@ export const prismaProjectCandidateRepository: ProjectCandidateRepository = {
   },
 
   async create(projectId, input) {
-    return prisma.$transaction(async (transaction) => {
+    return client.$transaction(async (transaction) => {
       if (input.isOurCompany) {
         await transaction.projectCandidate.updateMany({
           where: { projectId, isOurCompany: true },
@@ -136,7 +140,7 @@ export const prismaProjectCandidateRepository: ProjectCandidateRepository = {
   },
 
   async update(projectId, candidateId, input) {
-    return prisma.$transaction(async (transaction) => {
+    return client.$transaction(async (transaction) => {
       const candidate = await transaction.projectCandidate.findFirst({
         where: { id: candidateId, projectId },
         select: { id: true },
@@ -175,7 +179,7 @@ export const prismaProjectCandidateRepository: ProjectCandidateRepository = {
   },
 
   async delete(projectId, candidateId) {
-    return prisma.$transaction(async (transaction) => {
+    return client.$transaction(async (transaction) => {
       const result = await transaction.projectCandidate.deleteMany({
         where: { id: candidateId, projectId },
       });
@@ -197,7 +201,7 @@ export const prismaProjectCandidateRepository: ProjectCandidateRepository = {
   },
 
   async setAsOurCompany(projectId, candidateId) {
-    return prisma.$transaction(async (transaction) => {
+    return client.$transaction(async (transaction) => {
       const candidate = await transaction.projectCandidate.findFirst({
         where: { id: candidateId, projectId },
         select: { id: true },
@@ -226,4 +230,8 @@ export const prismaProjectCandidateRepository: ProjectCandidateRepository = {
       return true;
     });
   },
-};
+  };
+}
+
+export const prismaProjectCandidateRepository =
+  createPrismaProjectCandidateRepository(prisma);

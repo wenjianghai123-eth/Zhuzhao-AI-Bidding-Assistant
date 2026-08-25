@@ -565,7 +565,7 @@ export function DingbiaoManager({ initialData }: { initialData: DingbiaoPageData
       <section className="space-y-4" aria-labelledby="source-scenario-title">
         <div>
           <h2 id="source-scenario-title" className="text-lg font-semibold">
-            最终定标单位范围
+            清标来源与入围范围
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             清标 K2 不能单独标识来源；请选择“推优剔除规则 + K2”对应的具体清标场景。

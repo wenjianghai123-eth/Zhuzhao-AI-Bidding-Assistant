@@ -160,6 +160,26 @@
 
   .analysis-report {
     gap: 0 !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+  }
+
+  .analysis-report .overflow-x-auto {
+    overflow: visible !important;
+  }
+
+  .analysis-report table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed;
+  }
+
+  .analysis-report th,
+  .analysis-report td {
+    min-width: 0 !important;
+    padding: 1.5mm !important;
+    overflow-wrap: anywhere;
+    white-space: normal !important;
   }
 
   .report-cover {

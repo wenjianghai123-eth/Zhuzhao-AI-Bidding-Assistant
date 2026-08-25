@@ -22,7 +22,7 @@ function getCrumbs(pathname: string): Crumb[] {
   const segments = pathname.split("/").filter(Boolean);
 
   if (segments[0] === "performance") {
-    return [{ label: "数据中心" }, { label: "履约数据库" }];
+    return [{ label: "数据中心" }, { label: "履约信息" }];
   }
   if (segments[0] === "imports") {
     return [{ label: "数据中心" }, { label: "导入 Excel" }];

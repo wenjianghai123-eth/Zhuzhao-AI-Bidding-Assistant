@@ -239,4 +239,31 @@ describe("dingbiao application service", () => {
       { finalDrawIndex: 3, finalDrawValueFraction: "0.02" },
     ]);
   });
+
+  it("maps an invalid benchmark factor to actionable Chinese copy", async () => {
+    const project = createProject();
+    const fixture = createDependencies();
+    const dependencies: DingbiaoServiceDependencies = {
+      ...fixture.dependencies,
+      repository: {
+        ...fixture.dependencies.repository,
+        findProject: async () => ({
+          ...project,
+          finalDrawValueFractions: ["0.95", "0.01", "0.02"],
+        }),
+      },
+    };
+
+    const result = await calculateDingbiaoForQingbiaoScenario(
+      "project-1",
+      "source-1-0",
+      dependencies,
+    );
+    expect(result).toMatchObject({
+      status: "validation_error",
+      issues: expect.arrayContaining([
+        "当前定标K1与抽值组合导致基准价比例无效，请检查参数设置。",
+      ]),
+    });
+  });
 });

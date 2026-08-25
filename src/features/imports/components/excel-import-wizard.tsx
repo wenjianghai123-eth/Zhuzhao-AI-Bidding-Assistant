@@ -738,7 +738,7 @@ export function ExcelImportWizard() {
               <Link href={`/projects/${success.projectId}/candidates`}>查看候选单位</Link>
             </Button>
             <Button asChild variant="outline">
-              <Link href="/performance">查看履约数据库</Link>
+              <Link href="/performance">查看履约信息</Link>
             </Button>
             <Button type="button" variant="ghost" onClick={reset}>
               继续导入其他文件

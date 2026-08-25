@@ -59,6 +59,12 @@ function getCurrentProjectNav(projectId: string): readonly NavItem[] {
     icon: Building2,
   },
   {
+    label: "履约信息",
+    href: "/performance",
+    icon: Database,
+    exact: true,
+  },
+  {
     label: "清标测算",
     href: `/projects/${projectId}/qingbiao`,
     icon: ListChecks,
@@ -108,7 +114,7 @@ function ButtonLinkToProjects({
 
 const dataCenter: readonly NavItem[] = [
   { label: "Excel导入", href: "/imports/excel", icon: FileSpreadsheet },
-  { label: "履约数据库", href: "/performance", icon: Database },
+  { label: "履约信息", href: "/performance", icon: Database },
 ];
 
 type AppSidebarContentProps = {

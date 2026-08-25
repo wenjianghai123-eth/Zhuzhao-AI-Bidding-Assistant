@@ -111,19 +111,32 @@ function mapValidationError(
   candidatesById: ReadonlyMap<string, DingbiaoProjectCandidateSnapshot>,
   scenario: DingbiaoQingbiaoScenarioPageData,
 ) {
-  if (
-    error.code === "INVALID_CANDIDATE_VALUE" ||
-    error.code === "INVALID_SOURCE_QINGBIAO_RANK" ||
-    error.code === "DUPLICATE_CANDIDATE_ID" ||
-    error.code === "MISSING_NET_DISCOUNT_RATE" ||
-    error.code === "INVALID_NET_DISCOUNT_RATE"
-  ) {
-    return error.message.replace(
-      error.candidateId,
-      `“${candidateLabel(error.candidateId, candidatesById, scenario)}”`,
-    );
+  switch (error.code) {
+    case "INVALID_PROJECT_VALUE":
+      return error.field === "maxBidPrice"
+        ? "最高投标限价不是有效正数，请检查参数设置。"
+        : "不可竞争费不是有效非负数，请检查参数设置。";
+    case "MAX_BID_PRICE_MUST_EXCEED_FEE":
+      return "最高投标限价必须大于不可竞争费，请检查参数设置。";
+    case "INVALID_FINAL_DRAW_VALUE":
+      return `定标抽值${error.finalDrawIndex}必须是 0% 到 100% 之间的有效比例。`;
+    case "INVALID_CANDIDATE_VALUE":
+      return `“${candidateLabel(error.candidateId, candidatesById, scenario)}”的投标报价不是有效正数。`;
+    case "INVALID_SOURCE_QINGBIAO_RANK":
+      return `“${candidateLabel(error.candidateId, candidatesById, scenario)}”的清标来源排名无效。`;
+    case "DUPLICATE_CANDIDATE_ID":
+      return `清标来源中“${candidateLabel(error.candidateId, candidatesById, scenario)}”重复出现。`;
+    case "DUPLICATE_SOURCE_QINGBIAO_RANK":
+      return `清标来源排名 ${error.sourceQingbiaoRank} 出现重复，请重新完成清标测算。`;
+    case "MULTIPLE_OUR_COMPANIES":
+      return "当前清标来源包含多个我方单位，请检查候选单位设置。";
+    case "MISSING_NET_DISCOUNT_RATE":
+      return `“${candidateLabel(error.candidateId, candidatesById, scenario)}”缺少净下浮率，无法计算 N=${error.finalistCount} 定标 K1。`;
+    case "INVALID_NET_DISCOUNT_RATE":
+      return `“${candidateLabel(error.candidateId, candidatesById, scenario)}”的净下浮率无效，无法计算 N=${error.finalistCount} 定标 K1。`;
+    case "NON_POSITIVE_BENCHMARK_FACTOR":
+      return "当前定标K1与抽值组合导致基准价比例无效，请检查参数设置。";
   }
-  return error.message;
 }
 
 function buildCalculationView(
