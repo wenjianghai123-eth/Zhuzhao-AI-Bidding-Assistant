@@ -37,6 +37,16 @@ function requiredDecimal(label: string) {
     .regex(decimalPattern, `${label}必须是有效数字`);
 }
 
+function preferredStatus(label: string) {
+  return z
+    .string({ error: `请选择${label}` })
+    .trim()
+    .refine(
+      (value): boolean => value === "0" || value === "1",
+      `${label}必须选择“有”或“无”`,
+    );
+}
+
 function parseValidatedDecimal(value: string) {
   return decimalPattern.test(value) ? new Decimal(value) : null;
 }
@@ -50,8 +60,8 @@ export const candidateFormSchema = z
       .max(200, "单位名称不能超过 200 个字符"),
     bidPrice: requiredDecimal("投标总价"),
     netDiscountRate: requiredDecimal("净下浮率"),
-    trademarkScore: requiredDecimal("商标优"),
-    technicalScore: requiredDecimal("技术优"),
+    trademarkScore: preferredStatus("商务优"),
+    technicalScore: preferredStatus("技术优"),
     similarExperienceScore: requiredDecimal("同类业绩"),
     otherScore: requiredDecimal("其他主客观分"),
     isOurCompany: z.boolean(),
@@ -60,8 +70,6 @@ export const candidateFormSchema = z
     const bidPrice = parseValidatedDecimal(values.bidPrice);
     const netDiscountRate = parseValidatedDecimal(values.netDiscountRate);
     const scoreFields = [
-      ["trademarkScore", "商标优", values.trademarkScore],
-      ["technicalScore", "技术优", values.technicalScore],
       ["similarExperienceScore", "同类业绩", values.similarExperienceScore],
       ["otherScore", "其他主客观分", values.otherScore],
     ] as const;
@@ -120,12 +128,20 @@ export function createEmptyCandidateFormValues(): CandidateFormValues {
     companyName: "",
     bidPrice: "",
     netDiscountRate: "",
-    trademarkScore: "",
-    technicalScore: "",
+    trademarkScore: "0",
+    technicalScore: "0",
     similarExperienceScore: "",
     otherScore: "",
     isOurCompany: false,
   };
+}
+
+export function toCandidateFormData(values: CandidateFormValues) {
+  const formData = new FormData();
+  for (const field of CANDIDATE_FORM_FIELDS) {
+    formData.set(field, String(values[field]));
+  }
+  return formData;
 }
 
 export function readCandidateFormData(formData: FormData) {
@@ -179,6 +195,51 @@ export function toProjectCandidateInput(
   };
 }
 
+export function storedScoreToPreferredStatus(value: string) {
+  return new Decimal(value).isZero() ? "0" : "1";
+}
+
+export function preferredStatusLabel(value: string) {
+  return value === "1" ? "有" : "无";
+}
+
+function decimalInputsAreEqual(left: string, right: string) {
+  try {
+    return new Decimal(left).equals(new Decimal(right));
+  } catch {
+    return left === right;
+  }
+}
+
+export function candidateFormValuesAreEqual(
+  left: CandidateFormValues,
+  right: CandidateFormValues,
+) {
+  return (
+    left.companyName.trim() === right.companyName.trim() &&
+    left.isOurCompany === right.isOurCompany &&
+    decimalInputsAreEqual(left.bidPrice, right.bidPrice) &&
+    decimalInputsAreEqual(left.netDiscountRate, right.netDiscountRate) &&
+    decimalInputsAreEqual(left.trademarkScore, right.trademarkScore) &&
+    decimalInputsAreEqual(left.technicalScore, right.technicalScore) &&
+    decimalInputsAreEqual(
+      left.similarExperienceScore,
+      right.similarExperienceScore,
+    ) &&
+    decimalInputsAreEqual(left.otherScore, right.otherScore)
+  );
+}
+
+export function candidateFormHasUserInput(values: CandidateFormValues) {
+  return [
+    values.companyName,
+    values.bidPrice,
+    values.netDiscountRate,
+    values.similarExperienceScore,
+    values.otherScore,
+  ].some((value) => value.trim().length > 0);
+}
+
 export function toCandidateFormValues(
   candidate: ProjectCandidateSnapshot,
 ): CandidateFormValues {
@@ -186,8 +247,8 @@ export function toCandidateFormValues(
     companyName: candidate.companyName,
     bidPrice: preserveEditableDecimal(candidate.bidPrice),
     netDiscountRate: fractionToPercentagePoints(candidate.netDiscountRate),
-    trademarkScore: new Decimal(candidate.trademarkScore).toString(),
-    technicalScore: new Decimal(candidate.technicalScore).toString(),
+    trademarkScore: storedScoreToPreferredStatus(candidate.trademarkScore),
+    technicalScore: storedScoreToPreferredStatus(candidate.technicalScore),
     similarExperienceScore: new Decimal(
       candidate.similarExperienceScore,
     ).toString(),

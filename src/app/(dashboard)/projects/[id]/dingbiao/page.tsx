@@ -99,5 +99,5 @@ export default async function DingbiaoPage({
     );
   }
 
-  return <DingbiaoManager initialData={pageData} />;
+  return <DingbiaoManager key={pageData.projectId} initialData={pageData} />;
 }

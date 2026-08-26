@@ -92,7 +92,8 @@ async function readPerformanceRecords(
         candidate,
         projectType,
         records: await repository.findRecentScores(
-          candidate.companyName,
+          project.projectId,
+          candidate.id,
           projectType,
           12,
         ),

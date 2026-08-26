@@ -142,7 +142,7 @@ function addCandidates(workbook: ExcelJS.Workbook, data: AnalysisDeliveryData) {
     "是否我方",
     "投标总价（万元）",
     "净下浮率",
-    "商标优",
+    "商务优",
     "技术优",
     "同类业绩",
     "其他主客观分",

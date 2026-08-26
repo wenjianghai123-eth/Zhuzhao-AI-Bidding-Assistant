@@ -105,7 +105,13 @@ function projectFormData({ invalid = false } = {}) {
   formData.set("maxBidPrice", invalid ? "500" : "10000");
   formData.set("nonCompetitiveFee", "500");
   formData.append("projectTypes", "CURTAIN_WALL");
+  formData.set("qingbiaoDrawValue1", "0");
+  formData.set("qingbiaoDrawValue2", "1");
+  formData.set("qingbiaoDrawValue3", "2");
+  formData.set("qingbiaoDrawValue4", "3");
   formData.set("totalBidPriceScore", "60");
+  formData.set("similarExperienceScore", "10");
+  formData.set("otherScore", "20");
   formData.set("rankDeduction", "2");
   formData.set("finalDrawValue1", "0");
   formData.set("finalDrawValue2", "1");
@@ -132,10 +138,11 @@ function candidateFormData(
 }
 
 function performanceFormData(
+  candidateId: string,
   candidate: (typeof candidateFixtures)[number],
 ) {
   const formData = new FormData();
-  formData.set("companyName", candidate.companyName);
+  formData.set("candidateId", candidateId);
   formData.set("projectType", "CURTAIN_WALL");
   formData.set("classificationLevel", "A");
   formData.set("year", "2026");
@@ -228,6 +235,12 @@ describe("MVP empty-database acceptance flow", () => {
     expect(persistedRule?.maxBidPrice.toString()).toBe("10000");
     expect(persistedRule?.nonCompetitiveFee.toString()).toBe("500");
     expect(persistedRule?.totalBidPriceScore.toString()).toBe("60");
+    expect(persistedRule?.qingbiaoDrawValue1.toString()).toBe("0");
+    expect(persistedRule?.qingbiaoDrawValue2.toString()).toBe("0.01");
+    expect(persistedRule?.qingbiaoDrawValue3.toString()).toBe("0.02");
+    expect(persistedRule?.qingbiaoDrawValue4.toString()).toBe("0.03");
+    expect(persistedRule?.similarExperienceScore.toString()).toBe("10");
+    expect(persistedRule?.otherScore.toString()).toBe("20");
     expect(persistedRule?.rankDeduction.toString()).toBe("2");
     expect(
       [
@@ -293,24 +306,34 @@ describe("MVP empty-database acceptance flow", () => {
       }),
     ).toBe(1);
 
-    for (const candidate of candidateFixtures) {
+    for (const [index, candidate] of candidateFixtures.entries()) {
+      const candidateId = candidateIds[index];
+      if (!candidateId) {
+        throw new Error("Acceptance candidate ID is missing.");
+      }
       const performanceResult =
         await performanceActions.createPerformanceAction(
-          performanceFormData(candidate),
+          projectId,
+          performanceFormData(candidateId, candidate),
         );
       expect(performanceResult.status).toBe("success");
       if (performanceResult.status !== "success") {
         throw new Error(performanceResult.message);
       }
     }
-    expect(await prisma.companyPerformance.count()).toBe(6);
+    expect(
+      await prisma.companyPerformance.count({ where: { projectId } }),
+    ).toBe(6);
 
     const duplicatePerformanceResult =
       await performanceActions.createPerformanceAction(
-        performanceFormData(candidateFixtures[0]),
+        projectId,
+        performanceFormData(ourCandidateId, candidateFixtures[0]),
       );
     expect(duplicatePerformanceResult.status).toBe("conflict");
-    expect(await prisma.companyPerformance.count()).toBe(6);
+    expect(
+      await prisma.companyPerformance.count({ where: { projectId } }),
+    ).toBe(6);
 
     const qingbiaoBeforeCalculation =
       await qingbiaoRuntime.getRuntimeQingbiaoPageData(projectId);
@@ -444,6 +467,27 @@ describe("MVP empty-database acceptance flow", () => {
       0,
     );
 
+    const changedQingbiaoParameters = projectFormData();
+    changedQingbiaoParameters.set("qingbiaoDrawValue1", "0.5");
+    const settingsUpdateResult =
+      await projectActions.updateProjectSettingsAction(
+        projectId,
+        changedQingbiaoParameters,
+      );
+    expect(settingsUpdateResult.status).toBe("success");
+
+    const staleQingbiao =
+      await qingbiaoRuntime.getRuntimeQingbiaoPageData(projectId);
+    const staleDingbiao =
+      await dingbiaoRuntime.getRuntimeDingbiaoPageData(projectId);
+    const staleAnalysis =
+      await analysisRuntime.getRuntimeAnalysisPageData(projectId);
+    expect(staleQingbiao?.calculationState.status).toBe("stale");
+    expect(staleDingbiao?.qingbiaoCatalogStatus).toBe("stale");
+    expect(staleDingbiao?.latestCalculation).toBeNull();
+    expect(staleAnalysis?.qingbiaoState).toBe("stale");
+    expect(staleAnalysis?.dingbiaoState).toBe("stale");
+
     const emptyPreviewRequest = new Request(
       "http://localhost/api/imports/excel/preview",
       { method: "POST", body: new FormData() },
@@ -477,7 +521,7 @@ describe("MVP empty-database acceptance flow", () => {
       const persistedCounts = await Promise.all([
         freshPrisma.project.count(),
         freshPrisma.projectCandidate.count({ where: { projectId } }),
-        freshPrisma.companyPerformance.count(),
+        freshPrisma.companyPerformance.count({ where: { projectId } }),
         freshPrisma.qingbiaoScenario.count({ where: { projectId } }),
         freshPrisma.qingbiaoResult.count({
           where: { scenario: { projectId } },

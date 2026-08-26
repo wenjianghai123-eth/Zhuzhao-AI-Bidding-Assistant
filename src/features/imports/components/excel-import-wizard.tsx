@@ -54,6 +54,7 @@ import {
 } from "@/features/imports/excel-import-response-schema";
 import { formatMoney, formatScore } from "@/lib/formatters";
 import { formatPercentageFraction } from "@/lib/percentage";
+import { PROJECT_TYPE_LABELS as projectTypeLabels } from "@/lib/project-type-labels";
 import { cn } from "@/lib/utils";
 
 const workflowSteps = [
@@ -64,13 +65,6 @@ const workflowSteps = [
   "错误检查",
   "确认写入",
 ] as const;
-
-const projectTypeLabels = {
-  CURTAIN_WALL: "幕墙",
-  DECORATION: "装修",
-  GENERAL_CONTRACT: "总包",
-  LABORATORY: "实验室",
-} as const;
 
 const sectionLabels = {
   project: "项目参数",
@@ -281,7 +275,7 @@ function CandidatePreview({ preview }: { preview: ExcelImportPreviewView }) {
             <TableHead>单位名称</TableHead>
             <TableHead className="text-right">投标总价</TableHead>
             <TableHead className="text-right">净下浮率</TableHead>
-            <TableHead className="text-right">商标优</TableHead>
+            <TableHead className="text-right">商务优</TableHead>
             <TableHead className="text-right">技术优</TableHead>
             <TableHead className="text-right">同类业绩</TableHead>
             <TableHead className="pr-4 text-right">其他主客观分</TableHead>
@@ -738,7 +732,9 @@ export function ExcelImportWizard() {
               <Link href={`/projects/${success.projectId}/candidates`}>查看候选单位</Link>
             </Button>
             <Button asChild variant="outline">
-              <Link href="/performance">查看履约信息</Link>
+              <Link href={`/projects/${success.projectId}/performance`}>
+                查看履约信息
+              </Link>
             </Button>
             <Button type="button" variant="ghost" onClick={reset}>
               继续导入其他文件

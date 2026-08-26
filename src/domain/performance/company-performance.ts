@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import type { ProjectTypeValue } from "@/domain/projects/project-settings";
 
 export interface CompanyPerformanceInput {
-  companyName: string;
+  candidateId: string;
   projectType: ProjectTypeValue;
   classificationLevel: string;
   year: number;
@@ -13,6 +13,20 @@ export interface CompanyPerformanceInput {
 
 export interface CompanyPerformanceSnapshot extends CompanyPerformanceInput {
   id: string;
+  projectId: string;
+  companyName: string;
+}
+
+export interface ProjectPerformanceCandidate {
+  id: string;
+  companyName: string;
+}
+
+export interface ProjectPerformanceContext {
+  id: string;
+  name: string;
+  candidates: readonly ProjectPerformanceCandidate[];
+  projectTypes: readonly ProjectTypeValue[];
 }
 
 export interface PerformanceScoreRecord {

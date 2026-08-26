@@ -2,9 +2,9 @@
 
 ## 1. 范围
 
-本文档描述 Prisma + SQLite 的当前数据模型。模型已经承载 4 个推优剔除规则、16 套独立清标场景，以及每套清标场景最多 9 套定标场景；新版清标与单来源定标流程已经实现，全局 144 场景分析尚未实现。
+本文档描述 Prisma 的数据库无关业务模型：本地开发使用 SQLite，private staging / production 目标使用 PostgreSQL。模型已经承载 4 个推优剔除规则、16 套独立清标场景、每套清标场景最多 9 套定标场景，以及完整的全局 144 场景派生分析。
 
-数据库文件由 `DATABASE_URL` 指定，本地默认值为 `file:./dev.db`。数据库文件不提交到版本库。
+数据库由 `DATABASE_URL` 指定，本地默认值为 `file:./dev.db`。SQLite 文件不提交版本库；PostgreSQL schema 是从本文件对应的规范 Prisma schema 自动生成的派生物，provider-specific migration history 分开维护。
 
 ## 2. ER 图
 
@@ -13,6 +13,9 @@ erDiagram
     Project ||--o| ProjectRule : "has rule"
     ProjectRule ||--o{ ProjectRuleProjectType : "supports types"
     Project ||--o{ ProjectCandidate : "has candidates"
+    Project ||--o{ CompanyPerformance : "owns performance"
+    ProjectCandidate ||--o{ CompanyPerformance : "identifies company"
+    Project ||--o{ PerformanceQuarterArchive : "owns archives"
     Project ||--o{ QingbiaoExclusionRule : "has 4 rule slots"
     QingbiaoExclusionRule ||--o{ QingbiaoExclusionRuleCandidate : "excludes"
     ProjectCandidate ||--o{ QingbiaoExclusionRuleCandidate : "is excluded by"
@@ -26,6 +29,28 @@ erDiagram
     Project ||--o{ DingbiaoScenario : "has simulations"
     DingbiaoScenario ||--o{ DingbiaoResult : "produces finalist snapshots"
     ProjectCandidate ||--o{ DingbiaoResult : "identifies candidate"
+
+    CompanyPerformance {
+        string id PK
+        string projectId FK "nullable only for legacy"
+        string candidateId FK "nullable only for legacy"
+        string companyName "audit snapshot"
+        enum projectType
+        string classificationLevel
+        int year
+        int quarter "1..4"
+        decimal score
+    }
+
+    PerformanceQuarterArchive {
+        string id PK
+        string projectId FK "nullable only for legacy"
+        int year
+        int quarter "1..4"
+        datetime savedAt
+        datetime createdAt
+        datetime updatedAt
+    }
 
     QingbiaoExclusionRule {
         string id PK
@@ -97,7 +122,29 @@ erDiagram
     }
 ```
 
-`ProjectRuleProjectType`、`QingbiaoExclusionRuleCandidate` 和 `QingbiaoScenarioCandidate` 均为显式多选关联。`CompanyPerformance` 仍是跨项目公共数据，暂按 `companyName + projectType` 匹配。
+`ProjectRuleProjectType`、`QingbiaoExclusionRuleCandidate` 和 `QingbiaoScenarioCandidate` 均为显式多选关联。正式履约数据由 `CompanyPerformance.projectId` 归属工程项目，并以复合外键 `(candidateId, projectId) → ProjectCandidate(id, projectId)` 保证履约单位确实属于同一项目；`companyName` 只保留写入时的审计快照，不再承担跨项目关联。`PerformanceQuarterArchive` 同样属于 Project。
+
+`projectId` / `candidateId` 暂时可空仅服务 staged migration：旧全局记录若无法通过公司名称唯一匹配到恰好一个项目候选单位，就保留为 legacy/unassigned，项目页面、清标查询和所有新写入都不会读取或产生这类空归属记录。现有开发库经迁移审计，28 条履约和 4 条归档全部可可靠归属，未产生 legacy 行。
+
+### 2.1 Candidate 行内录入兼容契约
+
+`ProjectCandidate` 继续复用既有字段，不新增第二套 Candidate 模型，也不修改 Prisma schema。候选页面把 `trademarkScore` 的用户文案纠正为“商务优”，并与 `technicalScore` 一并按状态录入：UI“无”写入 Decimal 字符串 `0`，UI“有”写入 `1`；读取历史数据时零值显示“无”，任意非零旧值显示“有”。这两个兼容字段当前仍不进入清标综合得分。
+
+`bidPrice` 始终以 Decimal 字符串按万元保存；`netDiscountRate` 在 UI/CSV/粘贴预览中使用百分点，进入 Application/Domain 前转换为 fraction，例如 UI `17.8` 保存为 `0.178`。批量粘贴通过一次事务创建多行并只递增一次 `qingbiaoInputRevision` / `dingbiaoInputRevision`。候选名称修改继续更新原 ID；删除、更新、设置我方单位均使用 `projectId + candidateId` 做项目范围验证。
+
+### 2.2 履约季度归档
+
+逐条 `CompanyPerformance` 写入仍然代表履约记录已经持久化，但不再被错误解释为“季度已正式保存”。`PerformanceQuarterArchive` 记录用户对某个项目内 `projectId + year + quarter` 执行过正式归档：
+
+- `(projectId, year, quarter)` 唯一，`quarter` 由 SQLite/PostgreSQL migration 的 `CHECK` 约束为 1 至 4；
+- 归档行存在且该季度当前有履约记录时，季度状态为 `saved`；
+- 该季度有履约记录但没有归档行时，状态为 `pending`；
+- 该季度当前没有履约记录时，状态为 `empty`；
+- `recordCount` 不复制到归档表，由 `CompanyPerformance` 按 `projectId + year + quarter` 只读聚合，避免其他项目或陈旧快照混入；
+- `savedQuarterCount` 只统计 `saved` 季度，`totalSavedRecordCount` 只累加这些季度当前实际存在的履约记录；
+- 一览查询和筛选始终隐含当前 `projectId`，不会写数据库，也不会递增项目的清标/定标输入修订号；正式归档只写当前项目的 `PerformanceQuarterArchive`，同样不改变项目修订号。
+
+已归档季度的履约记录当前仍可按原流程增删改。本次没有擅自规定“编辑后自动退回待保存”或“直接更新已归档快照”；归档标记会保留，只要季度仍有记录就继续显示 `saved`，若记录全部删除则一览按事实显示 `empty`。编辑后的归档业务语义仍待确认。
 
 ## 3. 推优剔除规则
 
@@ -201,6 +248,8 @@ sourceQingbiaoScenarioId + finalistCount + finalDrawIndex
 
 迁移采用 staged nullable relation：
 
+- 迁移前 `CompanyPerformance` 仅在公司名称能唯一匹配一个 `ProjectCandidate` 时回填 `projectId + candidateId`；零匹配或多项目同名匹配保持两列均为 null，项目页面与清标不读取这些 legacy/unassigned 行。
+- 迁移前 `PerformanceQuarterArchive` 仅在该季度全部履约行都已归属且只属于同一项目时回填 `projectId`，否则保持 unassigned。
 - 迁移前 `QingbiaoScenario` 保持 `exclusionRuleId = null` 并设置 `isLegacy = true`，因为无法推断它属于哪种新版规则。
 - 迁移前 `DingbiaoScenario` 保留原 `qingbiaoScenarioId` / `finalDrawSlot`，新增来源和 index 保持 null。
 - 新写入必须同时设置明确的 `exclusionRuleId`、`sourceQingbiaoScenarioId` 和 `finalDrawIndex`。
@@ -213,6 +262,9 @@ sourceQingbiaoScenarioId + finalistCount + finalDrawIndex
 
 | 模型 | 约束 | 目的 |
 | --- | --- | --- |
+| `ProjectCandidate` | `(id, projectId)` | 为履约记录提供同项目复合外键目标 |
+| `CompanyPerformance` | `(projectId, candidateId, projectType, year, quarter)` | 同项目同单位同专业同季度唯一；不同项目同名公司互不冲突 |
+| `PerformanceQuarterArchive` | `(projectId, year, quarter)` | 项目内季度归档唯一 |
 | `QingbiaoExclusionRule` | `(projectId, ruleIndex)` | 项目内四个槽位唯一 |
 | `QingbiaoExclusionRuleCandidate` | `(exclusionRuleId, candidateId)` | 同一规则不重复剔除 |
 | `QingbiaoScenario` | `(exclusionRuleId, k2Value)` | 16 场景身份 |
@@ -229,6 +281,17 @@ sourceQingbiaoScenarioId + finalistCount + finalDrawIndex
 - `qingbiaoK2Value`、`ruleIndex`、`finalistCount`、`finalDrawIndex` 是离散 identity，不是比例。
 - 场景继续保存 `inputRevision`、`ruleVersion` 和时间戳；下游读取必须验证来源 revision。
 - 排名使用未舍入值，展示层才格式化。
+
+### 11.1 项目级清标参数
+
+`ProjectRule` 负责保存参数设置页面的 8 个清标参数：
+
+- `qingbiaoDrawValue1..4` 是 fraction，UI 分别以百分点输入和回填；它们是配置/兼容字段，不是 `QingbiaoScenario` identity，也不取代固定 `qingbiaoK2Value(0..3)`。
+- `totalBidPriceScore`、`similarExperienceScore`、`otherScore`、`rankDeduction` 是普通分数，不做百分比转换。
+- 当前公式使用 `ProjectRule.totalBidPriceScore`、`ProjectRule.rankDeduction`，以及候选级 `ProjectCandidate.similarExperienceScore`、`ProjectCandidate.otherScore`。两个同名的项目级分值尚不进入公式。
+- 任一项目级参数实际变化都会递增清标和定标输入修订号，使既有清标、定标和分析快照 stale。
+
+完整字段审计与兼容边界见 `docs/qingbiao-parameter-audit.md`。
 
 ## 12. Step 5 实际持久化契约（2026-08-24）
 

@@ -114,14 +114,14 @@ Analysis read model 依赖清标 `qingbiaoK1`、`referencePriceB`、`totalScore`
 
 仍需明确的限制是：ProjectRule、ProjectCandidate、CompanyPerformance 等可编辑主输入仍使用 SQLite NUMERIC。常规业务数量级和有限小数已覆盖，但当前服务端尚未统一限制最大金额和输入 scale；因此不能承诺任意长度输入在首次入库后仍逐位精确。若产品允许超高金额或超长小数，编码前应先批准范围/scale，再为输入边界增加验证或扩展 canonical 输入存储。
 
-## 9. PostgreSQL 正式版建议
+## 9. PostgreSQL 正式映射
 
-正式版迁移到 PostgreSQL 时使用 exact `NUMERIC/DECIMAL`，不要保留 SQLite REAL 语义，也不要经 JavaScript number 搬运。推荐分两类设计：
+PostgreSQL 派生 schema 与 baseline migration 已采用 exact `NUMERIC/DECIMAL`，不保留 SQLite REAL 语义，也不经 JavaScript number 搬运。当前映射为：
 
-- 比例、K1、抽值、分数和平均值：初始候选 `NUMERIC(38,20)`。
-- 金额、B、M 与金额差值：初始候选 `NUMERIC(38,18)`。
+- 比例、K1、抽值、分数和平均值：`NUMERIC(38,20)`。
+- 金额、B、M 与金额差值：`NUMERIC(38,18)`。
 
-这两个 scale 可完整容纳当前 20 位有效数字 Domain golden 和现有业务数量级，但在正式 migration 前仍必须先签署最大金额、整数位数与输入小数位数契约；若批准范围超出候选容量，应相应提高 precision/scale，不能静默 round。迁移程序应从 canonical 快照填充 exact NUMERIC，并逐行比较 canonical、目标 NUMERIC、rank 和 winner；验证完成后再决定是否保留 canonical 作为审计冗余。
+这两个 scale 可完整容纳当前 20 位有效数字 Domain golden 和现有业务数量级，但业务仍须签署最大金额、整数位数与输入小数位数契约；若批准范围超出当前容量，应通过新 migration 相应提高 precision/scale，不能静默 round。迁移程序从 canonical 快照填充 exact NUMERIC，并在事务提交前逐行比较 canonical、目标 NUMERIC、rank、winner 和 Golden 只读状态。canonical 在本阶段继续保留为审计冗余，完整设计见 `docs/postgresql-migration.md`。
 
 ## 10. 验证命令
 

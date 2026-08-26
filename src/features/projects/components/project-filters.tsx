@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { PROJECT_TYPE_OPTIONS } from "@/lib/project-type-labels";
 
 export function ProjectFilters({
   search,
@@ -69,10 +70,11 @@ export function ProjectFilters({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">全部类型</SelectItem>
-            <SelectItem value="CURTAIN_WALL">幕墙</SelectItem>
-            <SelectItem value="DECORATION">装修</SelectItem>
-            <SelectItem value="GENERAL_CONTRACT">总包</SelectItem>
-            <SelectItem value="LABORATORY">实验室</SelectItem>
+            {PROJECT_TYPE_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>

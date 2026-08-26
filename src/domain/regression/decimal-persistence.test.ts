@@ -126,6 +126,8 @@ async function createProjectFixture() {
   });
   await prismaClient.companyPerformance.create({
     data: {
+      projectId,
+      candidateId: candidateIds[0],
       companyName: "Decimal candidate 1",
       projectType: "CURTAIN_WALL",
       classificationLevel: "A",

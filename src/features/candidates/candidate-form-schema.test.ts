@@ -12,8 +12,8 @@ const validValues: CandidateFormValues = {
   companyName: "华南建设股份有限公司",
   bidPrice: "7850.25",
   netDiscountRate: "10.38",
-  trademarkScore: "2",
-  technicalScore: "3.5",
+  trademarkScore: "1",
+  technicalScore: "0",
   similarExperienceScore: "8",
   otherScore: "6.25",
   isOurCompany: true,
@@ -32,8 +32,8 @@ describe("candidateFormSchema", () => {
       companyName: "华南建设股份有限公司",
       bidPrice: "7850.25",
       netDiscountRate: "0.1038",
-      trademarkScore: "2",
-      technicalScore: "3.5",
+      trademarkScore: "1",
+      technicalScore: "0",
       similarExperienceScore: "8",
       otherScore: "6.25",
       isOurCompany: true,
@@ -75,7 +75,7 @@ describe("candidateFormSchema", () => {
   it("rejects malformed and negative score inputs without throwing", () => {
     const malformed = candidateFormSchema.safeParse({
       ...validValues,
-      technicalScore: "三分",
+      technicalScore: "未知",
     });
     const negative = candidateFormSchema.safeParse({
       ...validValues,
@@ -88,7 +88,7 @@ describe("candidateFormSchema", () => {
     if (!malformed.success) {
       expect(
         getCandidateFormFieldErrors(malformed.error).technicalScore,
-      ).toContain("技术优必须是有效数字");
+      ).toContain("技术优必须选择“有”或“无”");
     }
     if (!negative.success) {
       expect(getCandidateFormFieldErrors(negative.error).otherScore).toContain(
@@ -107,5 +107,31 @@ describe("candidate persistence mapping", () => {
     };
 
     expect(toCandidateFormValues(stored)).toEqual(validValues);
+  });
+
+  it("stores 17.8 percentage points as the 0.178 fraction", () => {
+    expect(
+      toProjectCandidateInput({
+        ...validValues,
+        netDiscountRate: "17.8",
+      }).netDiscountRate,
+    ).toBe("0.178");
+  });
+
+  it("displays the stored 0.1875 fraction as 18.75 percentage points", () => {
+    expect(
+      toCandidateFormValues({
+        id: "candidate-002",
+        projectId: "project-001",
+        ...toProjectCandidateInput(validValues),
+        netDiscountRate: "0.1875",
+        trademarkScore: "100",
+        technicalScore: "0",
+      }),
+    ).toMatchObject({
+      netDiscountRate: "18.75",
+      trademarkScore: "1",
+      technicalScore: "0",
+    });
   });
 });

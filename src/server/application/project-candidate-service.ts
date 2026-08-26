@@ -36,6 +36,55 @@ export async function createProjectCandidate(
   return { status: "created", candidateId };
 }
 
+export type CreateProjectCandidatesResult =
+  | { status: "created"; candidateIds: readonly string[] }
+  | { status: "project_not_found" }
+  | { status: "company_name_conflict"; companyNames: readonly string[] }
+  | { status: "multiple_our_companies" };
+
+export async function createProjectCandidates(
+  projectId: string,
+  inputs: readonly ProjectCandidateInput[],
+  repository: ProjectCandidateRepository = prismaProjectCandidateRepository,
+): Promise<CreateProjectCandidatesResult> {
+  if (!(await repository.projectExists(projectId))) {
+    return { status: "project_not_found" };
+  }
+
+  if (inputs.filter((input) => input.isOurCompany).length > 1) {
+    return { status: "multiple_our_companies" };
+  }
+
+  const firstIndexByCompanyName = new Map<string, number>();
+  const duplicateNames = new Set<string>();
+  for (const [index, input] of inputs.entries()) {
+    if (firstIndexByCompanyName.has(input.companyName)) {
+      duplicateNames.add(input.companyName);
+    } else {
+      firstIndexByCompanyName.set(input.companyName, index);
+    }
+  }
+
+  const existingNames = await repository.findExistingCompanyNames(
+    projectId,
+    inputs.map(({ companyName }) => companyName),
+  );
+  for (const companyName of existingNames) {
+    duplicateNames.add(companyName);
+  }
+  if (duplicateNames.size > 0) {
+    return {
+      status: "company_name_conflict",
+      companyNames: [...duplicateNames].toSorted(),
+    };
+  }
+
+  return {
+    status: "created",
+    candidateIds: await repository.createMany(projectId, inputs),
+  };
+}
+
 export type UpdateProjectCandidateResult =
   | { status: "updated" }
   | { status: "unchanged" }

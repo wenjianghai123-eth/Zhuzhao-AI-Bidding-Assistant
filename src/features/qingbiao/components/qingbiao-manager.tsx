@@ -19,6 +19,7 @@ import {
   calculateQingbiaoAction,
   saveQingbiaoExclusionRuleAction,
 } from "@/app/(dashboard)/projects/[id]/qingbiao/actions";
+import { updateExcludedCandidateSelection } from "@/features/qingbiao/exclusion-selection-state";
 import { getQingbiaoPageReadiness } from "@/features/qingbiao/qingbiao-page-policy";
 import { EmptyState } from "@/components/layout/empty-state";
 import { PageHeader } from "@/components/layout/page-header";
@@ -304,7 +305,7 @@ function ScenarioResult({ scenario }: { scenario: SavedQingbiaoScenarioSnapshot 
             规则{scenario.ruleIndex} · K2={formatK2(scenario.qingbiaoK2Value)} 测算明细
           </CardTitle>
           <CardDescription>
-            商标优、技术优仅展示，当前不计入清标综合得分。
+            商务优、技术优仅展示，当前不计入清标综合得分。
           </CardDescription>
         </CardHeader>
         <CardContent className="overflow-x-auto px-0">
@@ -322,7 +323,7 @@ function ScenarioResult({ scenario }: { scenario: SavedQingbiaoScenarioSnapshot 
                 <TableHead className="text-right">报价得分</TableHead>
                 <TableHead className="text-right">同类业绩</TableHead>
                 <TableHead className="text-right">其他主客观分</TableHead>
-                <TableHead className="text-right">商标优（不计分）</TableHead>
+                <TableHead className="text-right">商务优（不计分）</TableHead>
                 <TableHead className="text-right">技术优（不计分）</TableHead>
                 <TableHead className="pr-4 text-right">综合得分</TableHead>
               </TableRow>
@@ -611,9 +612,11 @@ export function QingbiaoManager({ initialData }: { initialData: QingbiaoPageData
       const selected = current[ruleId] ?? [];
       return {
         ...current,
-        [ruleId]: checked
-          ? [...selected, candidateId]
-          : selected.filter((id) => id !== candidateId),
+        [ruleId]: updateExcludedCandidateSelection(
+          selected,
+          candidateId,
+          checked,
+        ),
       };
     });
     setIssues([]);

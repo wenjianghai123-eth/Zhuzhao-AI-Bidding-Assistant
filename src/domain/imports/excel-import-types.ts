@@ -60,7 +60,9 @@ export interface ImportedProjectCandidate extends ProjectCandidateInput {
   sourceRow: number;
 }
 
-export interface ImportedCompanyPerformance extends CompanyPerformanceInput {
+export interface ImportedCompanyPerformance
+  extends Omit<CompanyPerformanceInput, "candidateId"> {
+  companyName: string;
   sourceRow: number;
   sourceColumn: string;
 }

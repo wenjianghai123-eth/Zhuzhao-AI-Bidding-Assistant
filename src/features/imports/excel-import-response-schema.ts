@@ -1,13 +1,9 @@
 import { z } from "zod";
 
+import { PROJECT_TYPE_VALUES } from "@/domain/projects/project-settings";
 import { excelImportMappingSchema } from "@/features/imports/excel-import-request";
 
-const projectTypeSchema = z.enum([
-  "CURTAIN_WALL",
-  "DECORATION",
-  "GENERAL_CONTRACT",
-  "LABORATORY",
-]);
+const projectTypeSchema = z.enum(PROJECT_TYPE_VALUES);
 
 const issueSchema = z.object({
   severity: z.enum(["error", "warning"]),
@@ -35,7 +31,13 @@ const projectSchema = z.object({
   maxBidPrice: z.string(),
   nonCompetitiveFee: z.string(),
   projectTypes: z.array(projectTypeSchema),
+  qingbiaoDrawValue1: z.string(),
+  qingbiaoDrawValue2: z.string(),
+  qingbiaoDrawValue3: z.string(),
+  qingbiaoDrawValue4: z.string(),
   totalBidPriceScore: z.string(),
+  similarExperienceScore: z.string(),
+  otherScore: z.string(),
   rankDeduction: z.string(),
   finalDrawValue1: z.string(),
   finalDrawValue2: z.string(),

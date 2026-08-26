@@ -19,13 +19,7 @@ import type {
   QingbiaoScenarioCatalogSnapshot,
   SavedQingbiaoCalculationSnapshot,
 } from "@/server/repositories/qingbiao-repository";
-
-const PROJECT_TYPE_LABELS: Record<ProjectTypeValue, string> = {
-  CURTAIN_WALL: "幕墙",
-  DECORATION: "装修",
-  GENERAL_CONTRACT: "总包",
-  LABORATORY: "实验室",
-};
+import { PROJECT_TYPE_LABELS } from "@/lib/project-type-labels";
 
 export const QINGBIAO_APPLICATION_RANKING_POLICY = {
   mode: "ALL_CANDIDATES",
@@ -58,7 +52,8 @@ export interface QingbiaoPageData {
 }
 
 type PerformanceAverageReader = (
-  companyName: string,
+  projectId: string,
+  candidateId: string,
   projectTypes: readonly ProjectTypeValue[],
 ) => Promise<RecentPerformanceAverageResult>;
 
@@ -79,7 +74,8 @@ async function loadCandidatesWithPerformance(
   return Promise.all(
     project.candidates.map(async (candidate) => {
       const performance = await performanceAverageReader(
-        candidate.companyName,
+        project.projectId,
+        candidate.id,
         project.projectTypes,
       );
 

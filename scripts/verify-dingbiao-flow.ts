@@ -9,7 +9,10 @@ import {
   getRuntimeQingbiaoPageData,
   getRuntimeQingbiaoScenarioCatalog,
 } from "../src/server/application/qingbiao-runtime-service";
+import { assertSafeDestructiveDatabaseTarget } from "../src/server/db/database-target-safety";
 import { prisma } from "../src/server/db/prisma";
+
+assertSafeDestructiveDatabaseTarget(process.env.DATABASE_URL, "Dingbiao verification");
 
 const projectId = "dingbiao-persistence-verification";
 const candidates = [
@@ -23,11 +26,6 @@ const candidates = [
 
 async function cleanVerificationData() {
   await prisma.project.deleteMany({ where: { id: projectId } });
-  await prisma.companyPerformance.deleteMany({
-    where: {
-      companyName: { in: candidates.map(({ companyName }) => companyName) },
-    },
-  });
 }
 
 await cleanVerificationData();
@@ -66,6 +64,8 @@ try {
   });
   await prisma.companyPerformance.createMany({
     data: candidates.map((candidate) => ({
+      projectId,
+      candidateId: candidate.id,
       companyName: candidate.companyName,
       projectType: "CURTAIN_WALL",
       classificationLevel: "A",

@@ -59,6 +59,18 @@ const PROJECT_FIELDS = [
     required: true,
   },
   {
+    field: "similarExperienceScore",
+    label: "同类业绩分值",
+    aliases: ["同类业绩分值"],
+    required: false,
+  },
+  {
+    field: "otherScore",
+    label: "其他主客观分值",
+    aliases: ["其他主客观分值"],
+    required: false,
+  },
+  {
     field: "rankDeduction",
     label: "排名递减扣分值",
     aliases: ["排名递减扣分值"],
@@ -87,8 +99,8 @@ const CANDIDATE_FIELDS = [
   },
   {
     field: "trademarkScore",
-    label: "商标优",
-    aliases: ["商标优", "商标分"],
+    label: "商务优",
+    aliases: ["商务优", "商务分", "商标优", "商标分"],
     required: true,
   },
   {
@@ -554,6 +566,17 @@ function findFinalDrawSources(sheet: ExcelWorkbookSheet) {
   );
 }
 
+function findQingbiaoDrawSources(sheet: ExcelWorkbookSheet) {
+  return [1, 2, 3, 4].map((slot) =>
+    findProjectSource(sheet, {
+      field: `qingbiaoDrawValue${slot}`,
+      label: `清标抽值${slot}`,
+      aliases: [`清标抽值${slot}`],
+      required: false,
+    }),
+  );
+}
+
 function parseProject(
   sheet: ExcelWorkbookSheet | undefined,
   issues: ExcelImportIssue[],
@@ -572,7 +595,7 @@ function parseProject(
   for (const definition of PROJECT_FIELDS) {
     const source = sources.get(definition.field) ?? null;
     fieldMappings.push(projectMapping(definition, sheet, source));
-    if (!source?.valueCell) {
+    if (definition.required && !source?.valueCell) {
       issues.push(
         issue({
           severity: "error",
@@ -586,6 +609,22 @@ function parseProject(
       );
     }
   }
+
+
+  const qingbiaoDrawSources = findQingbiaoDrawSources(sheet);
+  qingbiaoDrawSources.forEach((source, index) => {
+    const slot = index + 1;
+    fieldMappings.push({
+      section: "project",
+      targetField: `qingbiaoDrawValue${slot}`,
+      targetLabel: `清标抽值${slot}`,
+      required: false,
+      sourceSheet: sheet.name,
+      sourceLocation: source?.valueCell?.address ?? null,
+      sourceLabel: source?.labelCell.displayText ?? null,
+      detected: source?.valueCell !== null && source !== null,
+    });
+  });
 
   const drawSources = findFinalDrawSources(sheet);
   drawSources.forEach((source, index) => {
@@ -666,6 +705,31 @@ function parseProject(
       nonNegative: true,
     },
   );
+  const similarExperienceSource =
+    sources.get("similarExperienceScore")?.valueCell ?? null;
+  const similarExperienceScore =
+    similarExperienceSource && !isPlaceholder(similarExperienceSource.displayText)
+      ? parseDecimal(similarExperienceSource, {
+          section: "project",
+          sheetName: sheet.name,
+          field: "similarExperienceScore",
+          label: "同类业绩分值",
+          issues,
+          nonNegative: true,
+        })
+      : "0";
+  const otherScoreSource = sources.get("otherScore")?.valueCell ?? null;
+  const otherScore =
+    otherScoreSource && !isPlaceholder(otherScoreSource.displayText)
+      ? parseDecimal(otherScoreSource, {
+          section: "project",
+          sheetName: sheet.name,
+          field: "otherScore",
+          label: "其他主客观分值",
+          issues,
+          nonNegative: true,
+        })
+      : "0";
   const rankDeduction = parseDecimal(
     sources.get("rankDeduction")?.valueCell ?? null,
     {
@@ -677,6 +741,21 @@ function parseProject(
       nonNegative: true,
     },
   );
+  const defaultQingbiaoDrawValues = ["0", "0.01", "0.02", "0.03"] as const;
+  const qingbiaoDrawValues = qingbiaoDrawSources.map((source, index) => {
+    const valueCell = source?.valueCell ?? null;
+    if (!valueCell || isPlaceholder(valueCell.displayText)) {
+      return defaultQingbiaoDrawValues[index] ?? "0";
+    }
+    return parsePercentageCellToFraction(valueCell, {
+      section: "project",
+      sheetName: sheet.name,
+      field: `qingbiaoDrawValue${index + 1}`,
+      label: `清标抽值${index + 1}`,
+      issues,
+      bounded: false,
+    });
+  });
   const finalDrawValue1 = parsePercentageCellToFraction(drawSources[0]?.valueCell ?? null, {
     section: "project",
     sheetName: sheet.name,
@@ -727,7 +806,10 @@ function parseProject(
     !maxBidPrice ||
     !nonCompetitiveFee ||
     !projectTypes ||
+    qingbiaoDrawValues.some((value) => value === null) ||
     !totalBidPriceScore ||
+    !similarExperienceScore ||
+    !otherScore ||
     !rankDeduction ||
     finalDrawValue1 === null ||
     finalDrawValue2 === null ||
@@ -741,7 +823,13 @@ function parseProject(
     maxBidPrice,
     nonCompetitiveFee,
     projectTypes,
+    qingbiaoDrawValue1: qingbiaoDrawValues[0] ?? "0",
+    qingbiaoDrawValue2: qingbiaoDrawValues[1] ?? "0.01",
+    qingbiaoDrawValue3: qingbiaoDrawValues[2] ?? "0.02",
+    qingbiaoDrawValue4: qingbiaoDrawValues[3] ?? "0.03",
     totalBidPriceScore,
+    similarExperienceScore,
+    otherScore,
     rankDeduction,
     finalDrawValue1,
     finalDrawValue2,
@@ -892,7 +980,7 @@ function parseCandidates(
       },
     );
     const scoreFields = [
-      ["trademarkScore", "商标优"],
+      ["trademarkScore", "商务优"],
       ["technicalScore", "技术优"],
       ["similarExperienceScore", "同类业绩"],
       ["otherScore", "其他主客观分"],

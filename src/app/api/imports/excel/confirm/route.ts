@@ -39,8 +39,8 @@ export async function POST(request: Request) {
   });
   if (result.status === "imported") {
     revalidatePath("/projects");
-    revalidatePath("/performance");
     revalidatePath(`/projects/${result.projectId}`);
+    revalidatePath(`/projects/${result.projectId}/performance`);
     return Response.json(result);
   }
   if (result.status === "validation_error") {

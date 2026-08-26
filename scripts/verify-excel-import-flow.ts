@@ -7,16 +7,18 @@ import {
   confirmRuntimeExcelImport,
   previewRuntimeExcelImport,
 } from "../src/server/application/excel-import-runtime-service";
+import { assertSafeDestructiveDatabaseTarget } from "../src/server/db/database-target-safety";
 import { prisma } from "../src/server/db/prisma";
 import { readExcelWorkbook } from "../src/server/imports/excel-workbook-reader";
 import { prismaExcelImportRepository } from "../src/server/repositories/excel-import-repository";
+
+assertSafeDestructiveDatabaseTarget(process.env.DATABASE_URL, "Excel import verification");
 
 const projectName = "Excel导入事务验收项目";
 const companyName = "Excel导入事务验收公司";
 
 async function cleanVerificationData() {
   await prisma.project.deleteMany({ where: { name: projectName } });
-  await prisma.companyPerformance.deleteMany({ where: { companyName } });
 }
 
 function createWorkbook() {
@@ -89,17 +91,28 @@ try {
     throw new Error(`Excel import confirmation failed: ${confirmed.status}`);
   }
 
-  const [project, performanceCount] = await Promise.all([
+  const [project, performanceRecords] = await Promise.all([
     prisma.project.findUnique({
       where: { id: confirmed.projectId },
-      select: { name: true, candidates: { select: { companyName: true } } },
+      select: {
+        name: true,
+        candidates: { select: { id: true, companyName: true } },
+      },
     }),
-    prisma.companyPerformance.count({ where: { companyName } }),
+    prisma.companyPerformance.findMany({
+      where: { projectId: confirmed.projectId },
+      select: { projectId: true, candidateId: true, companyName: true },
+    }),
   ]);
   if (
     project?.name !== projectName ||
     project.candidates[0]?.companyName !== companyName ||
-    performanceCount !== 2
+    performanceRecords.length !== 2 ||
+    performanceRecords.some(
+      (record) =>
+        record.projectId !== confirmed.projectId ||
+        record.candidateId !== project.candidates[0]?.id,
+    )
   ) {
     throw new Error("Persisted Excel import data does not match the preview.");
   }
@@ -108,15 +121,25 @@ try {
   if (!parsed.data) {
     throw new Error("Verification workbook did not parse after import.");
   }
-  const conflictResult = await prismaExcelImportRepository.importData(parsed.data);
-  const projectCountAfterConflict = await prisma.project.count({
+  const secondImport = await prismaExcelImportRepository.importData(parsed.data);
+  const projectCountAfterSecondImport = await prisma.project.count({
     where: { name: projectName },
   });
   if (
-    conflictResult.status !== "performance_conflict" ||
-    projectCountAfterConflict !== 1
+    secondImport.status !== "imported" ||
+    projectCountAfterSecondImport !== 2
   ) {
-    throw new Error("Conflicting import created partial project data.");
+    throw new Error("Same-company performance could not be isolated by project.");
+  }
+  const secondProjectPerformanceCount =
+    await prisma.companyPerformance.count({
+      where: {
+        projectId: secondImport.projectId,
+        companyName,
+      },
+    });
+  if (secondProjectPerformanceCount !== 2) {
+    throw new Error("Second import performance was not scoped to its project.");
   }
 
   console.log(
@@ -124,8 +147,9 @@ try {
       {
         projectCreated: project.name,
         candidatesImported: project.candidates.length,
-        performanceRecordsImported: performanceCount,
-        conflictRollbackVerified: true,
+        performanceRecordsImported: performanceRecords.length,
+        sameCompanySecondProjectAllowed: true,
+        projectScopedCandidateRelationVerified: true,
       },
       null,
       2,

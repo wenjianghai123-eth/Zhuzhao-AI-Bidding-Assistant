@@ -1,4 +1,5 @@
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaPg } from "@prisma/adapter-pg";
 import Database from "better-sqlite3";
 import {
   mkdtempSync,
@@ -26,6 +27,7 @@ import {
 import { PrismaClient } from "@/generated/prisma/client";
 import { ensureQingbiaoExclusionRules } from "@/server/application/qingbiao-exclusion-rule-service";
 import { calculateAllDingbiaoScenarios } from "@/server/application/global-dingbiao-service";
+import { assertPostgresqlTestDatabaseTarget } from "@/server/db/database-target-safety";
 import type { createPrismaAnalysisRepository } from "@/server/repositories/analysis-repository";
 import type { createPrismaDingbiaoRepository } from "@/server/repositories/dingbiao-repository";
 import type { createPrismaProjectCandidateRepository } from "@/server/repositories/project-candidate-repository";
@@ -75,6 +77,7 @@ let createExclusionRuleRepository:
 let createQingbiaoRepository:
   | typeof createPrismaQingbiaoRepository
   | undefined;
+let usesExternalPostgresql = false;
 
 function requireClient() {
   if (!client) {
@@ -419,13 +422,33 @@ beforeAll(async () => {
   temporaryDirectory = mkdtempSync(
     join(tmpdir(), "zhuzhao-scenario-repository-"),
   );
-  const databasePath = join(temporaryDirectory, "repository.db");
-  applyMigrations(databasePath);
-  const adapter = new PrismaBetterSqlite3({
-    url: `file:${databasePath.replaceAll("\\", "/")}`,
-  });
-  client = new PrismaClient({ adapter });
-  process.env.DATABASE_URL = `file:${databasePath.replaceAll("\\", "/")}`;
+  usesExternalPostgresql = process.env.POSTGRES_REPOSITORY === "1";
+  if (usesExternalPostgresql) {
+    assertPostgresqlTestDatabaseTarget(
+      process.env.TEST_DATABASE_URL,
+      "PostgreSQL repository verification",
+    );
+    if (process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL) {
+      throw new Error(
+        "PostgreSQL repository verification requires DATABASE_URL to equal TEST_DATABASE_URL.",
+      );
+    }
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) {
+      throw new Error("PostgreSQL repository verification requires DATABASE_URL.");
+    }
+    client = new PrismaClient({
+      adapter: new PrismaPg({ connectionString: databaseUrl }),
+    });
+  } else {
+    const databasePath = join(temporaryDirectory, "repository.db");
+    applyMigrations(databasePath);
+    const databaseUrl = `file:${databasePath.replaceAll("\\", "/")}`;
+    client = new PrismaClient({
+      adapter: new PrismaBetterSqlite3({ url: databaseUrl }),
+    });
+    process.env.DATABASE_URL = databaseUrl;
+  }
   const [
     analysisModule,
     dingbiaoModule,
@@ -458,6 +481,9 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (usesExternalPostgresql && client) {
+    await client.project.deleteMany();
+  }
   await client?.$disconnect();
   await defaultPrismaClient?.$disconnect();
   if (previousDatabaseUrl === undefined) {
@@ -570,6 +596,65 @@ describe("qingbiao exclusion rule persistence", () => {
 });
 
 describe("project candidate scope", () => {
+  it("creates a pasted batch atomically and increments stale revisions once", async () => {
+    const prismaClient = requireClient();
+    const repository =
+      requireProjectCandidateRepositoryFactory()(prismaClient);
+    const before = await prismaClient.project.findUniqueOrThrow({
+      where: { id: projectId },
+      select: { qingbiaoInputRevision: true, dingbiaoInputRevision: true },
+    });
+    const inputs = [
+      {
+        companyName: "批量候选单位甲",
+        bidPrice: "9860.5",
+        netDiscountRate: "0.178",
+        trademarkScore: "1",
+        technicalScore: "0",
+        similarExperienceScore: "8",
+        otherScore: "12",
+        isOurCompany: false,
+      },
+      {
+        companyName: "批量候选单位乙",
+        bidPrice: "9720",
+        netDiscountRate: "0.19",
+        trademarkScore: "0",
+        technicalScore: "1",
+        similarExperienceScore: "7",
+        otherScore: "11",
+        isOurCompany: false,
+      },
+    ] as const;
+
+    await expect(repository.createMany(projectId, inputs)).resolves.toHaveLength(2);
+    const after = await prismaClient.project.findUniqueOrThrow({
+      where: { id: projectId },
+      select: { qingbiaoInputRevision: true, dingbiaoInputRevision: true },
+    });
+    expect(after).toEqual({
+      qingbiaoInputRevision: before.qingbiaoInputRevision + 1,
+      dingbiaoInputRevision: before.dingbiaoInputRevision + 1,
+    });
+    expect(
+      await prismaClient.projectCandidate.count({
+        where: { projectId, companyName: { startsWith: "批量候选单位" } },
+      }),
+    ).toBe(2);
+
+    await expect(
+      repository.createMany(projectId, [
+        { ...inputs[0], companyName: "事务候选单位" },
+        { ...inputs[1], companyName: "事务候选单位" },
+      ]),
+    ).rejects.toThrow();
+    expect(
+      await prismaClient.projectCandidate.count({
+        where: { projectId, companyName: "事务候选单位" },
+      }),
+    ).toBe(0);
+  });
+
   it("rejects update, delete and set-our-company with a candidate from another project", async () => {
     const otherProjectId = await createOtherProjectDingbiaoFixture();
     const repository =

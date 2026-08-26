@@ -9,7 +9,7 @@ import {
 } from "@/features/performance/performance-form-schema";
 
 const validValues: PerformanceFormValues = {
-  companyName: "履约测试单位",
+  candidateId: "candidate-001",
   projectType: "CURTAIN_WALL",
   classificationLevel: "A",
   year: "2026",
@@ -27,7 +27,7 @@ describe("performanceFormSchema", () => {
     }
 
     expect(toCompanyPerformanceInput(result.data)).toEqual({
-      companyName: "履约测试单位",
+      candidateId: "candidate-001",
       projectType: "CURTAIN_WALL",
       classificationLevel: "A",
       year: 2026,
@@ -56,6 +56,8 @@ describe("performanceFormSchema", () => {
   it("round-trips persisted records to form values", () => {
     const stored = {
       id: "performance-001",
+      projectId: "project-001",
+      companyName: "履约测试单位",
       ...toCompanyPerformanceInput(validValues),
     };
 

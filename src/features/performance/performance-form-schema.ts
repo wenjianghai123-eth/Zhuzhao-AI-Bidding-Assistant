@@ -9,29 +9,17 @@ import {
   PROJECT_TYPE_VALUES,
   type ProjectTypeValue,
 } from "@/domain/projects/project-settings";
+import {
+  PROJECT_TYPE_LABELS,
+  PROJECT_TYPE_OPTIONS,
+} from "@/lib/project-type-labels";
 
-export const PERFORMANCE_PROJECT_TYPE_OPTIONS: readonly {
-  value: ProjectTypeValue;
-  label: string;
-}[] = [
-  { value: "CURTAIN_WALL", label: "幕墙" },
-  { value: "DECORATION", label: "装修" },
-  { value: "GENERAL_CONTRACT", label: "总包" },
-  { value: "LABORATORY", label: "实验室" },
-];
+export const PERFORMANCE_PROJECT_TYPE_OPTIONS = PROJECT_TYPE_OPTIONS;
 
-export const PERFORMANCE_PROJECT_TYPE_LABELS: Record<
-  ProjectTypeValue,
-  string
-> = {
-  CURTAIN_WALL: "幕墙",
-  DECORATION: "装修",
-  GENERAL_CONTRACT: "总包",
-  LABORATORY: "实验室",
-};
+export const PERFORMANCE_PROJECT_TYPE_LABELS = PROJECT_TYPE_LABELS;
 
 const PERFORMANCE_FORM_FIELDS = [
-  "companyName",
+  "candidateId",
   "projectType",
   "classificationLevel",
   "year",
@@ -49,11 +37,10 @@ const yearPattern = /^\d+$/;
 
 export const performanceFormSchema = z
   .object({
-    companyName: z
-      .string({ error: "请输入单位名称" })
+    candidateId: z
+      .string({ error: "请选择履约单位" })
       .trim()
-      .min(1, "请输入单位名称")
-      .max(200, "单位名称不能超过 200 个字符"),
+      .min(1, "请选择履约单位"),
     projectType: z.enum(PROJECT_TYPE_VALUES, {
       error: "请选择项目类型",
     }),
@@ -103,6 +90,7 @@ export type PerformanceFormValues = z.infer<typeof performanceFormSchema>;
 
 export interface PerformanceListItem extends PerformanceFormValues {
   id: string;
+  companyName: string;
 }
 
 export type PerformanceActionResult =
@@ -117,10 +105,13 @@ export type PerformanceActionResult =
   | { status: "not_found"; message: string }
   | { status: "failure"; message: string };
 
-export function createEmptyPerformanceFormValues(): PerformanceFormValues {
+export function createEmptyPerformanceFormValues(
+  candidateId: string,
+  projectType: ProjectTypeValue,
+): PerformanceFormValues {
   return {
-    companyName: "",
-    projectType: "CURTAIN_WALL",
+    candidateId,
+    projectType,
     classificationLevel: "",
     year: "",
     quarter: "1",
@@ -130,7 +121,7 @@ export function createEmptyPerformanceFormValues(): PerformanceFormValues {
 
 export function readPerformanceFormData(formData: FormData) {
   return {
-    companyName: formData.get("companyName"),
+    candidateId: formData.get("candidateId"),
     projectType: formData.get("projectType"),
     classificationLevel: formData.get("classificationLevel"),
     year: formData.get("year"),
@@ -165,7 +156,7 @@ export function toCompanyPerformanceInput(
   values: PerformanceFormValues,
 ): CompanyPerformanceInput {
   return {
-    companyName: values.companyName,
+    candidateId: values.candidateId,
     projectType: values.projectType,
     classificationLevel: values.classificationLevel,
     year: Number(values.year),
@@ -193,7 +184,7 @@ export function toPerformanceFormValues(
   }
 
   return {
-    companyName: record.companyName,
+    candidateId: record.candidateId,
     projectType: record.projectType,
     classificationLevel: record.classificationLevel,
     year: record.year.toString(),

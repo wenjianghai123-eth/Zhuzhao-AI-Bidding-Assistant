@@ -60,5 +60,5 @@ export default async function QingbiaoPage({
     throw new Error("Failed to load qingbiao page data for an existing project");
   }
 
-  return <QingbiaoManager initialData={pageData} />;
+  return <QingbiaoManager key={pageData.projectId} initialData={pageData} />;
 }

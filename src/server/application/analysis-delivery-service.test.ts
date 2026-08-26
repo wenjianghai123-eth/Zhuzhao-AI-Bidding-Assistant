@@ -31,6 +31,7 @@ function createDependencies(
       })),
     },
     performanceRepository: {
+      findProjectContext: vi.fn(async () => null),
       list: vi.fn(async () => []),
       findById: vi.fn(async () => null),
       identityExists: vi.fn(async () => false),

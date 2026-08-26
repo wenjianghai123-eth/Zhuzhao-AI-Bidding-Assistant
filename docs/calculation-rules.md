@@ -19,6 +19,8 @@
 - 所有比例展示统一通过 `formatPercentageFraction()` 将 fraction 转成带 `%` 的文本。
 - Excel 百分比格式单元格的原始 fraction 保持不变；固定模板中明确为百分点的字段，只在字段映射边界通过 `percentagePointsToFraction()` 转换。禁止使用“值大于 1 就除以 100”的全局猜测。
 - `qingbiaoK2` 是唯一受控例外：持久化的 `0 | 1 | 2 | 3` 是场景 identity `qingbiaoK2Value`，不是 domain 计算比例。公式需要比例时必须且只能通过 `qingbiaoK2ValueToRate()` 转为 `0 | 0.01 | 0.02 | 0.03`。
+- 参数设置中的 `qingbiaoDrawValue1..4` 是独立的项目级兼容配置：同样以 fraction 持久化，但当前不参与场景 identity 或清标公式，不得用其隐式替换经过 Golden 验证的固定 K2 映射。
+- 项目级 `ProjectRule.similarExperienceScore` 与 `ProjectRule.otherScore` 是普通分数配置，当前不进入综合得分；公式继续使用候选级同名实际分值。未确认项目级分值的业务用途前不得擅自接入公式。
 - 模拟中标率在 domain 内同样使用 `0..1` fraction；例如 2 次中标/3 次模拟为 `0.6666…`，仅展示边界转换为 `66.67%`。
 - money、rate、score 及其转换继续使用 `decimal.js`，不得使用 JavaScript 浮点数。
 - `pnpm audit:percentages` 对持久化比例字段执行只读数量级审计；它只报告疑似百分点值，不自动修改历史数据。
@@ -29,7 +31,7 @@
 
 ### 数据范围
 
-- 按企业名称与项目类型独立取数。
+- 先按当前 `projectId + candidateId` 限定履约归属，再按项目类型独立取数；同名公司在其他项目的记录不可参与。
 - 每个项目类型按 `year`、`quarter` 从新到旧排序。
 - 每个项目类型最多使用最新 12 条季度记录；不足 12 条时使用全部现有记录。
 

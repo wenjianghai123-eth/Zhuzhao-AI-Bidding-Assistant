@@ -28,7 +28,6 @@ type NavItem = {
   href:
     | "/projects"
     | "/projects/new"
-    | "/performance"
     | "/imports/excel"
     | `/projects/${string}`;
   icon: LucideIcon;
@@ -42,48 +41,47 @@ const projectManagement: readonly NavItem[] = [
 
 function getCurrentProjectNav(projectId: string): readonly NavItem[] {
   return [
-  {
-    label: "项目概览",
-    href: `/projects/${projectId}`,
-    icon: LayoutDashboard,
-    exact: true,
-  },
-  {
-    label: "参数设置",
-    href: `/projects/${projectId}/settings`,
-    icon: Settings2,
-  },
-  {
-    label: "候选单位",
-    href: `/projects/${projectId}/candidates`,
-    icon: Building2,
-  },
-  {
-    label: "履约信息",
-    href: "/performance",
-    icon: Database,
-    exact: true,
-  },
-  {
-    label: "清标测算",
-    href: `/projects/${projectId}/qingbiao`,
-    icon: ListChecks,
-  },
-  {
-    label: "定标预测",
-    href: `/projects/${projectId}/dingbiao`,
-    icon: Target,
-  },
-  {
-    label: "决策分析",
-    href: `/projects/${projectId}/analysis`,
-    icon: BarChart3,
-  },
-  {
-    label: "分析报告",
-    href: `/projects/${projectId}/report`,
-    icon: FileBarChart,
-  },
+    {
+      label: "项目概览",
+      href: `/projects/${projectId}`,
+      icon: LayoutDashboard,
+      exact: true,
+    },
+    {
+      label: "参数设置",
+      href: `/projects/${projectId}/settings`,
+      icon: Settings2,
+    },
+    {
+      label: "候选单位",
+      href: `/projects/${projectId}/candidates`,
+      icon: Building2,
+    },
+    {
+      label: "履约信息",
+      href: `/projects/${projectId}/performance`,
+      icon: Database,
+    },
+    {
+      label: "清标测算",
+      href: `/projects/${projectId}/qingbiao`,
+      icon: ListChecks,
+    },
+    {
+      label: "定标预测",
+      href: `/projects/${projectId}/dingbiao`,
+      icon: Target,
+    },
+    {
+      label: "决策分析",
+      href: `/projects/${projectId}/analysis`,
+      icon: BarChart3,
+    },
+    {
+      label: "分析报告",
+      href: `/projects/${projectId}/report`,
+      icon: FileBarChart,
+    },
   ];
 }
 
@@ -114,7 +112,6 @@ function ButtonLinkToProjects({
 
 const dataCenter: readonly NavItem[] = [
   { label: "Excel导入", href: "/imports/excel", icon: FileSpreadsheet },
-  { label: "履约信息", href: "/performance", icon: Database },
 ];
 
 type AppSidebarContentProps = {

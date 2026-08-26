@@ -3,7 +3,10 @@ import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { ProjectSettingsForm } from "@/features/projects/components/project-settings-form";
 import { toProjectSettingsFormValues } from "@/features/projects/project-settings-form-schema";
-import { getProjectSettings } from "@/server/application/project-settings-service";
+import {
+  getProjectSettings,
+  getProjectTypeEditState,
+} from "@/server/application/project-settings-service";
 
 export default async function ProjectSettingsPage({
   params,
@@ -11,9 +14,12 @@ export default async function ProjectSettingsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const project = await getProjectSettings(id);
+  const [project, projectTypeEditState] = await Promise.all([
+    getProjectSettings(id),
+    getProjectTypeEditState(id),
+  ]);
 
-  if (!project) {
+  if (!project || !projectTypeEditState) {
     notFound();
   }
 
@@ -25,8 +31,10 @@ export default async function ProjectSettingsPage({
         description={`维护“${project.name}”的基本信息、清标参数与定标参数。`}
       />
       <ProjectSettingsForm
+        key={project.id}
         mode="edit"
         projectId={project.id}
+        projectTypeEditState={projectTypeEditState}
         initialValues={toProjectSettingsFormValues(project)}
       />
     </div>

@@ -1,6 +1,7 @@
 import "dotenv/config";
 
 import { QINGBIAO_EXCLUSION_RULE_INDEXES } from "../src/domain/qingbiao/exclusion-rule";
+import { assertSafeDemoDatabaseTarget } from "../src/server/db/database-target-safety";
 import { prisma } from "../src/server/db/prisma";
 
 // Demo / Development Data only. This seed must never run automatically in production.
@@ -107,8 +108,20 @@ const performanceSeeds = [
 ] as const;
 
 async function main() {
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("Demo / Development Data seed is disabled in production.");
+  const target = assertSafeDemoDatabaseTarget(
+    process.env.DATABASE_URL,
+    "Demo / Development Data seed",
+  );
+  const isExplicitlyAllowed = process.env.ALLOW_DEMO_SEED === "true";
+  if (process.env.NODE_ENV === "production" && !isExplicitlyAllowed) {
+    throw new Error(
+      "Demo / Development Data seed in a production-mode runtime requires ALLOW_DEMO_SEED=true.",
+    );
+  }
+  if (target.provider === "postgresql" && !isExplicitlyAllowed) {
+    throw new Error(
+      "PostgreSQL Demo / Development Data seed requires ALLOW_DEMO_SEED=true.",
+    );
   }
 
   await prisma.project.upsert({
@@ -155,7 +168,12 @@ async function main() {
     },
   });
 
-  for (const projectType of ["CURTAIN_WALL", "DECORATION"] as const) {
+  for (const projectType of [
+    "CURTAIN_WALL",
+    "DECORATION",
+    "GENERAL_CONTRACT",
+    "LABORATORY",
+  ] as const) {
     await prisma.projectRuleProjectType.upsert({
       where: { projectId_projectType: { projectId, projectType } },
       update: {},
@@ -163,9 +181,10 @@ async function main() {
     });
   }
 
+  const candidateIdsByCompanyName = new Map<string, string>();
   for (const candidate of candidateSeeds) {
     const { id, ...candidateData } = candidate;
-    await prisma.projectCandidate.upsert({
+    const persistedCandidate = await prisma.projectCandidate.upsert({
       where: {
         projectId_companyName: {
           projectId,
@@ -178,24 +197,32 @@ async function main() {
         projectId,
         ...candidateData,
       },
+      select: { id: true },
     });
+    candidateIdsByCompanyName.set(candidate.companyName, persistedCandidate.id);
   }
 
   for (const performance of performanceSeeds) {
+    const candidateId = candidateIdsByCompanyName.get(performance.companyName);
+    if (!candidateId) {
+      throw new Error(`Missing seeded candidate: ${performance.companyName}`);
+    }
     await prisma.companyPerformance.upsert({
       where: {
-        companyName_projectType_year_quarter: {
-          companyName: performance.companyName,
+        projectId_candidateId_projectType_year_quarter: {
+          projectId,
+          candidateId,
           projectType: performance.projectType,
           year: performance.year,
           quarter: performance.quarter,
         },
       },
       update: {
+        companyName: performance.companyName,
         classificationLevel: performance.classificationLevel,
         score: performance.score,
       },
-      create: performance,
+      create: { projectId, candidateId, ...performance },
     });
   }
 

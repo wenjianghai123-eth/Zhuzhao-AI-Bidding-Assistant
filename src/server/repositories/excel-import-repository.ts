@@ -2,10 +2,7 @@ import type {
   ExcelImportData,
   ImportedCompanyPerformance,
 } from "@/domain/imports";
-import { performanceImportIdentity } from "@/domain/imports";
 import { prisma } from "@/server/db/prisma";
-
-const PERFORMANCE_QUERY_BATCH_SIZE = 100;
 
 export type ImportExcelDataResult =
   | { status: "imported"; projectId: string }
@@ -21,54 +18,16 @@ export interface ExcelImportRepository {
   importData(data: ExcelImportData): Promise<ImportExcelDataResult>;
 }
 
-async function findExistingPerformanceIdentities(
-  records: readonly ImportedCompanyPerformance[],
-  client: Pick<typeof prisma, "companyPerformance">,
-) {
-  const identities = new Set<string>();
-  for (let start = 0; start < records.length; start += PERFORMANCE_QUERY_BATCH_SIZE) {
-    const batch = records.slice(start, start + PERFORMANCE_QUERY_BATCH_SIZE);
-    const existing = await client.companyPerformance.findMany({
-      where: {
-        OR: batch.map((record) => ({
-          companyName: record.companyName,
-          projectType: record.projectType,
-          year: record.year,
-          quarter: record.quarter,
-        })),
-      },
-      select: {
-        companyName: true,
-        projectType: true,
-        year: true,
-        quarter: true,
-      },
-    });
-    for (const record of existing) {
-      identities.add(performanceImportIdentity(record));
-    }
-  }
-  return identities;
-}
-
 export const prismaExcelImportRepository: ExcelImportRepository = {
-  async findExistingPerformanceIdentities(records) {
-    return findExistingPerformanceIdentities(records, prisma);
+  async findExistingPerformanceIdentities() {
+    // A full workbook import creates a new Project. Performance identities are
+    // unique inside that new project, so records from existing projects never
+    // conflict merely because company/type/quarter values are equal.
+    return new Set<string>();
   },
 
   async importData(data) {
     return prisma.$transaction(async (transaction) => {
-      const existingPerformance = await findExistingPerformanceIdentities(
-        data.performanceRecords,
-        transaction,
-      );
-      if (existingPerformance.size > 0) {
-        return {
-          status: "performance_conflict",
-          conflictingIdentities: [...existingPerformance],
-        };
-      }
-
       const project = await transaction.project.create({
         data: {
           name: data.project.name,
@@ -76,7 +35,13 @@ export const prismaExcelImportRepository: ExcelImportRepository = {
             create: {
               maxBidPrice: data.project.maxBidPrice,
               nonCompetitiveFee: data.project.nonCompetitiveFee,
+              qingbiaoDrawValue1: data.project.qingbiaoDrawValue1,
+              qingbiaoDrawValue2: data.project.qingbiaoDrawValue2,
+              qingbiaoDrawValue3: data.project.qingbiaoDrawValue3,
+              qingbiaoDrawValue4: data.project.qingbiaoDrawValue4,
               totalBidPriceScore: data.project.totalBidPriceScore,
+              similarExperienceScore: data.project.similarExperienceScore,
+              otherScore: data.project.otherScore,
               rankDeduction: data.project.rankDeduction,
               finalDrawValue1: data.project.finalDrawValue1,
               finalDrawValue2: data.project.finalDrawValue2,
@@ -101,18 +66,38 @@ export const prismaExcelImportRepository: ExcelImportRepository = {
             })),
           },
         },
-        select: { id: true },
+        select: {
+          id: true,
+          candidates: { select: { id: true, companyName: true } },
+        },
       });
 
+      const candidateIdsByCompanyName = new Map(
+        project.candidates.map((candidate) => [
+          candidate.companyName,
+          candidate.id,
+        ]),
+      );
+
       await transaction.companyPerformance.createMany({
-        data: data.performanceRecords.map((record) => ({
-          companyName: record.companyName,
-          projectType: record.projectType,
-          classificationLevel: record.classificationLevel,
-          year: record.year,
-          quarter: record.quarter,
-          score: record.score,
-        })),
+        data: data.performanceRecords.map((record) => {
+          const candidateId = candidateIdsByCompanyName.get(record.companyName);
+          if (!candidateId) {
+            throw new Error(
+              `Imported performance candidate is missing: ${record.companyName}`,
+            );
+          }
+          return {
+            projectId: project.id,
+            candidateId,
+            companyName: record.companyName,
+            projectType: record.projectType,
+            classificationLevel: record.classificationLevel,
+            year: record.year,
+            quarter: record.quarter,
+            score: record.score,
+          };
+        }),
       });
 
       return { status: "imported", projectId: project.id };

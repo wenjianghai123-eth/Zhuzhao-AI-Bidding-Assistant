@@ -18,6 +18,7 @@ export default async function CandidatesPage({
 
   return (
     <CandidatesManager
+      key={project.projectId}
       projectId={project.projectId}
       projectName={project.projectName}
       candidates={project.candidates.map((candidate) => ({

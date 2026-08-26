@@ -20,7 +20,15 @@ export interface ProjectCandidateRepository {
     companyName: string,
     excludeCandidateId?: string,
   ): Promise<boolean>;
+  findExistingCompanyNames(
+    projectId: string,
+    companyNames: readonly string[],
+  ): Promise<readonly string[]>;
   create(projectId: string, input: ProjectCandidateInput): Promise<string>;
+  createMany(
+    projectId: string,
+    inputs: readonly ProjectCandidateInput[],
+  ): Promise<readonly string[]>;
   update(
     projectId: string,
     candidateId: string,
@@ -113,6 +121,14 @@ export function createPrismaProjectCandidateRepository(
     return candidate !== null;
   },
 
+  async findExistingCompanyNames(projectId, companyNames) {
+    const candidates = await client.projectCandidate.findMany({
+      where: { projectId, companyName: { in: [...companyNames] } },
+      select: { companyName: true },
+    });
+    return candidates.map(({ companyName }) => companyName);
+  },
+
   async create(projectId, input) {
     return client.$transaction(async (transaction) => {
       if (input.isOurCompany) {
@@ -136,6 +152,40 @@ export function createPrismaProjectCandidateRepository(
       });
 
       return candidate.id;
+    });
+  },
+
+  async createMany(projectId, inputs) {
+    if (inputs.length === 0) {
+      return [];
+    }
+
+    return client.$transaction(async (transaction) => {
+      if (inputs.some((input) => input.isOurCompany)) {
+        await transaction.projectCandidate.updateMany({
+          where: { projectId, isOurCompany: true },
+          data: { isOurCompany: false },
+        });
+      }
+
+      const candidateIds: string[] = [];
+      for (const input of inputs) {
+        const candidate = await transaction.projectCandidate.create({
+          data: { projectId, ...input },
+          select: { id: true },
+        });
+        candidateIds.push(candidate.id);
+      }
+
+      await transaction.project.update({
+        where: { id: projectId },
+        data: {
+          qingbiaoInputRevision: { increment: 1 },
+          dingbiaoInputRevision: { increment: 1 },
+        },
+      });
+
+      return candidateIds;
     });
   },
 

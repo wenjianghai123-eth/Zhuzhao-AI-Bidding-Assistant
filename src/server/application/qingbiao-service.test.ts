@@ -189,15 +189,23 @@ function createDependencies(options?: {
   };
   const dependencies: QingbiaoServiceDependencies = {
     repository,
-    performanceAverageReader: async (companyName) =>
-      companyName === options?.missingCompany
-        ? {
-            status: "missing_data",
-            averageScore: null,
-            projectTypeAverages: [],
-            missingProjectTypes: ["CURTAIN_WALL"],
-          }
-        : performanceResult(companyName),
+    performanceAverageReader: async (projectId, candidateId) => {
+      if (projectId !== currentProject.projectId) {
+        throw new Error("Performance lookup escaped the current project.");
+      }
+      const companyName = currentProject.candidates.find(
+        (candidate) => candidate.id === candidateId,
+      )?.companyName;
+      if (!companyName || companyName === options?.missingCompany) {
+        return {
+          status: "missing_data",
+          averageScore: null,
+          projectTypeAverages: [],
+          missingProjectTypes: ["CURTAIN_WALL"],
+        };
+      }
+      return performanceResult(companyName);
+    },
     scenarioCalculator: (input) => {
       calculatorInputs.push(input);
       return calculateQingbiaoScenarioV2(input);

@@ -28,9 +28,6 @@ function getContextName(pathname: string) {
   if (/^\/projects\/(?!new(?:\/|$))[^/]+/.test(pathname)) {
     return "当前项目工作区";
   }
-  if (pathname === "/performance") {
-    return "企业履约数据中心";
-  }
   if (pathname === "/imports/excel") {
     return "Excel 数据导入";
   }

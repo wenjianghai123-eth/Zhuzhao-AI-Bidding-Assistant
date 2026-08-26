@@ -43,6 +43,8 @@ yarn-error.log*
 /dev.db
 /dev.db-*
 /src/generated/prisma/
+/sqlite-to-postgres*.json
+*.dump
 
 # vercel
 .vercel

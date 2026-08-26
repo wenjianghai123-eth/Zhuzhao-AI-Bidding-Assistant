@@ -15,9 +15,10 @@ import { prismaQingbiaoExclusionRuleRepository } from "@/server/repositories/qin
 const runtimeDependencies = {
   repository: prismaQingbiaoRepository,
   performanceAverageReader: async (
-    companyName: string,
-    projectTypes: Parameters<typeof getRecentPerformanceAverage>[1],
-  ) => getRecentPerformanceAverage(companyName, projectTypes),
+    projectId: string,
+    candidateId: string,
+    projectTypes: Parameters<typeof getRecentPerformanceAverage>[2],
+  ) => getRecentPerformanceAverage(projectId, candidateId, projectTypes),
   scenarioCalculator: calculateQingbiaoScenarioV2,
 };
 

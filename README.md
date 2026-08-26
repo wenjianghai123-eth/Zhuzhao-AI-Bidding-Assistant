@@ -85,6 +85,19 @@ pnpm verify:excel-export
 
 这些持久化专项命令默认读取当前 `DATABASE_URL`。发布前优先运行 `pnpm verify:release`，由它统一提供隔离数据库。
 
+## PostgreSQL 与私有 Staging
+
+本地开发继续默认 SQLite；私有 staging / production 使用 PostgreSQL 17。真实连接串只通过未跟踪环境变量或部署平台 secret store 注入。准备独立测试库后执行：
+
+```powershell
+$env:TEST_DATABASE_URL="postgresql://USER:PASSWORD@127.0.0.1:5432/zhuzhao_test?schema=public"
+pnpm verify:postgres
+pnpm verify:cross-db-golden
+pnpm test:e2e:postgres
+```
+
+这些命令硬拒绝 production/live 目标，并在结束时恢复本地 SQLite Prisma Client。SQLite → PostgreSQL 工具默认 dry-run；正式搬迁必须显式 `--execute`。详见 [PostgreSQL 迁移](docs/postgresql-migration.md) 与 [Private Staging 部署](docs/staging-deployment.md)。
+
 ## Excel 导出与分析报告
 
 项目必须具有当前有效的 `16/16` 清标来源和完整定标结果，决策分析页的“导出分析结果”按钮才可用。导出文件包含 9 个 Sheet，其中“计算快照_审计”保留 canonical decimal 以便复核；项目名称会经过文件名净化和长度限制。
@@ -94,11 +107,13 @@ pnpm verify:excel-export
 ## Production build
 
 ```powershell
+pnpm db:generate:postgres
 pnpm build
+pnpm db:migrate:deploy
 pnpm start
 ```
 
-生产运行前应提供明确的 `DATABASE_URL` 并先执行 `pnpm db:deploy`。当前 SQLite 适用于 MVP 单机交付；多实例部署和正式账号权限不在本版本范围内。
+生产运行前应提供 PostgreSQL `DATABASE_URL`，按“安装 → PostgreSQL Client → build → `migrate deploy` → start”顺序部署。禁止在正式库使用 `db push` 或 `migrate reset`。本版本尚无认证，应用只能部署在受网络访问控制的私有环境。
 
 ## 主要路由
 
@@ -111,13 +126,17 @@ pnpm start
 - `/projects/[id]/dingbiao`
 - `/projects/[id]/analysis`
 - `/projects/[id]/report`
-- `/performance`
+- `/projects/[projectId]/performance`
 - `/imports/excel`
 
 ## 文档
 
 - [Release Acceptance](docs/release-acceptance.md)
 - [Release Checklist](docs/release-checklist.md)
+- [PostgreSQL 迁移与生产就绪](docs/postgresql-migration.md)
+- [Private Staging 部署](docs/staging-deployment.md)
+- [PostgreSQL 备份与恢复](docs/backup-restore.md)
+- [Private Staging Checklist](docs/staging-checklist.md)
 - [20260820 业务对齐](docs/20260820-business-alignment.md)
 - [业务数据流](docs/business-flow.md)
 - [架构说明](docs/architecture.md)

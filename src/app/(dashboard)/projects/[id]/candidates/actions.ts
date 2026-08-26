@@ -11,10 +11,24 @@ import {
 } from "@/features/candidates/candidate-form-schema";
 import {
   createProjectCandidate,
+  createProjectCandidates,
   deleteProjectCandidate,
   setProjectCandidateAsOurCompany,
   updateProjectCandidate,
 } from "@/server/application/project-candidate-service";
+
+const bulkCandidateSchema = candidateFormSchema.array().min(1).max(200);
+
+export type BulkCandidateActionResult =
+  | {
+      status: "success";
+      candidateIds: readonly string[];
+      message: string;
+    }
+  | { status: "invalid"; message: string; invalidRowNumbers: readonly number[] }
+  | { status: "conflict"; message: string }
+  | { status: "not_found"; message: string }
+  | { status: "failure"; message: string };
 
 function revalidateCandidatePages(projectId: string) {
   revalidatePath(`/projects/${projectId}`);
@@ -63,6 +77,63 @@ export async function createCandidateAction(
     };
   } catch {
     return { status: "failure", message: "新增候选单位失败，请稍后重试" };
+  }
+}
+
+export async function bulkCreateCandidatesAction(
+  projectId: string,
+  rows: unknown,
+): Promise<BulkCandidateActionResult> {
+  if (projectId.trim().length === 0) {
+    return { status: "not_found", message: "未找到当前项目" };
+  }
+
+  const validation = bulkCandidateSchema.safeParse(rows);
+  if (!validation.success) {
+    const invalidRowNumbers = [
+      ...new Set(
+        validation.error.issues
+          .map((issue) => issue.path[0])
+          .filter((value): value is number => typeof value === "number")
+          .map((index) => index + 1),
+      ),
+    ].toSorted((left, right) => left - right);
+    return {
+      status: "invalid",
+      message: "批量数据校验失败，未写入任何候选单位",
+      invalidRowNumbers,
+    };
+  }
+
+  try {
+    const result = await createProjectCandidates(
+      projectId,
+      validation.data.map(toProjectCandidateInput),
+    );
+    if (result.status === "project_not_found") {
+      return { status: "not_found", message: "当前项目不存在" };
+    }
+    if (result.status === "company_name_conflict") {
+      return {
+        status: "conflict",
+        message: `以下单位已存在或重复：${result.companyNames.join("、")}`,
+      };
+    }
+    if (result.status === "multiple_our_companies") {
+      return { status: "conflict", message: "一个项目最多只能设置一个我方单位" };
+    }
+
+    revalidateCandidatePages(projectId);
+    return {
+      status: "success",
+      candidateIds: result.candidateIds,
+      message: `已导入 ${result.candidateIds.length} 家候选单位`,
+    };
+  } catch {
+    return {
+      status: "failure",
+      message: "批量导入失败，未写入任何候选单位，请稍后重试",
+    };
   }
 }
 

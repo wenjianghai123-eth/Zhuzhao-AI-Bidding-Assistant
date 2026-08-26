@@ -7,6 +7,7 @@ import { ChevronRight, Home } from "lucide-react";
 const projectPageNames: Readonly<Record<string, string>> = {
   settings: "参数设置",
   candidates: "候选单位",
+  performance: "履约信息",
   qingbiao: "清标测算",
   dingbiao: "定标预测",
   analysis: "决策分析",
@@ -21,9 +22,6 @@ type Crumb = {
 function getCrumbs(pathname: string): Crumb[] {
   const segments = pathname.split("/").filter(Boolean);
 
-  if (segments[0] === "performance") {
-    return [{ label: "数据中心" }, { label: "履约信息" }];
-  }
   if (segments[0] === "imports") {
     return [{ label: "数据中心" }, { label: "导入 Excel" }];
   }

@@ -6,6 +6,7 @@ import {
   projectSettingsFormSchema,
   toProjectSettingsInput,
   toProjectSettingsFormValues,
+  updateProjectTypeSelection,
   type ProjectSettingsFormValues,
 } from "@/features/projects/project-settings-form-schema";
 
@@ -14,7 +15,13 @@ const validValues: ProjectSettingsFormValues = {
   maxBidPrice: "8600.00",
   nonCompetitiveFee: "420.00",
   projectTypes: ["CURTAIN_WALL", "DECORATION"],
+  qingbiaoDrawValue1: "0",
+  qingbiaoDrawValue2: "1",
+  qingbiaoDrawValue3: "2.5",
+  qingbiaoDrawValue4: "3",
   totalBidPriceScore: "40",
+  similarExperienceScore: "10",
+  otherScore: "8",
   rankDeduction: "2",
   finalDrawValue1: "0",
   finalDrawValue2: "1",
@@ -35,7 +42,13 @@ describe("projectSettingsFormSchema", () => {
       maxBidPrice: "8600",
       nonCompetitiveFee: "420",
       projectTypes: ["CURTAIN_WALL", "DECORATION"],
+      qingbiaoDrawValue1: "0",
+      qingbiaoDrawValue2: "0.01",
+      qingbiaoDrawValue3: "0.025",
+      qingbiaoDrawValue4: "0.03",
       totalBidPriceScore: "40",
+      similarExperienceScore: "10",
+      otherScore: "8",
       rankDeduction: "2",
       finalDrawValue1: "0",
       finalDrawValue2: "0.01",
@@ -90,6 +103,28 @@ describe("projectSettingsFormSchema", () => {
       "最高投标限价必须是有效数字",
     );
   });
+
+  it("keeps score parameters as ordinary scores instead of percentages", () => {
+    const result = projectSettingsFormSchema.safeParse({
+      ...validValues,
+      totalBidPriceScore: "40",
+      similarExperienceScore: "12.5",
+      otherScore: "7.25",
+      rankDeduction: "2",
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(toProjectSettingsInput(result.data)).toMatchObject({
+      totalBidPriceScore: "40",
+      similarExperienceScore: "12.5",
+      otherScore: "7.25",
+      rankDeduction: "2",
+    });
+  });
 });
 
 describe("project settings persistence mapping", () => {
@@ -119,5 +154,50 @@ describe("project settings persistence mapping", () => {
     };
 
     expect(projectSettingsAreEqual(current, equivalent)).toBe(true);
+  });
+});
+
+describe("project type checkbox state", () => {
+  it("adds and removes arbitrary project types without dropping other selections", () => {
+    const withLaboratory = updateProjectTypeSelection(
+      ["CURTAIN_WALL", "DECORATION"],
+      "LABORATORY",
+      true,
+    );
+
+    expect(withLaboratory).toEqual([
+      "CURTAIN_WALL",
+      "DECORATION",
+      "LABORATORY",
+    ]);
+    expect(
+      updateProjectTypeSelection(withLaboratory, "CURTAIN_WALL", false),
+    ).toEqual(["DECORATION", "LABORATORY"]);
+  });
+
+  it("keeps rapid repeated checkbox callbacks idempotent and canonical", () => {
+    const selectedOnce = updateProjectTypeSelection(
+      ["DECORATION"],
+      "GENERAL_CONTRACT",
+      true,
+    );
+    const selectedTwice = updateProjectTypeSelection(
+      selectedOnce,
+      "GENERAL_CONTRACT",
+      true,
+    );
+    const selectedAll = updateProjectTypeSelection(
+      updateProjectTypeSelection(selectedTwice, "LABORATORY", true),
+      "CURTAIN_WALL",
+      true,
+    );
+
+    expect(selectedTwice).toEqual(["DECORATION", "GENERAL_CONTRACT"]);
+    expect(selectedAll).toEqual([
+      "CURTAIN_WALL",
+      "DECORATION",
+      "GENERAL_CONTRACT",
+      "LABORATORY",
+    ]);
   });
 });

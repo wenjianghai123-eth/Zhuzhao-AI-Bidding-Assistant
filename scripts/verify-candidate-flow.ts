@@ -10,14 +10,23 @@ import {
   updateProjectCandidate,
 } from "../src/server/application/project-candidate-service";
 import { createProjectWithSettings } from "../src/server/application/project-settings-service";
+import { assertSafeDestructiveDatabaseTarget } from "../src/server/db/database-target-safety";
 import { prisma } from "../src/server/db/prisma";
+
+assertSafeDestructiveDatabaseTarget(process.env.DATABASE_URL, "candidate verification");
 
 const projectSettings: ProjectSettingsInput = {
   name: "候选单位持久化验收项目",
   maxBidPrice: "10000",
   nonCompetitiveFee: "300",
   projectTypes: ["CURTAIN_WALL"],
+  qingbiaoDrawValue1: "0",
+  qingbiaoDrawValue2: "0.01",
+  qingbiaoDrawValue3: "0.02",
+  qingbiaoDrawValue4: "0.03",
   totalBidPriceScore: "40",
+  similarExperienceScore: "0",
+  otherScore: "0",
   rankDeduction: "2",
   finalDrawValue1: "0",
   finalDrawValue2: "0.01",

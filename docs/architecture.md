@@ -2,9 +2,9 @@
 
 ## 1. 状态与范围
 
-本文档描述 **v0.1.0 MVP** 的实际架构。系统是一个 Next.js 单体全栈应用，覆盖项目管理、参数设置、候选单位、履约数据库、清标测算、定标预测、决策分析、分析报告和 Excel 预览导入。
+本文档描述 **v0.9.0-rc.1** 的实际架构。系统是一个 Next.js 单体全栈应用，覆盖项目管理、参数设置、候选单位、履约数据库、清标测算、定标预测、决策分析、分析报告和 Excel 预览导入。
 
-当前数据库为 SQLite；应用通过 Prisma repository 隔离持久化细节，为后续迁移 PostgreSQL 保留边界。清标和定标规则均由纯 TypeScript domain 函数实现，React 组件不实现业务公式。
+本地开发默认 SQLite；private staging / production 目标为 PostgreSQL 17。应用通过 Prisma repository 隔离持久化细节，运行时按 `DATABASE_URL` 选择 driver adapter。清标和定标规则均由纯 TypeScript domain 函数实现，React 组件和数据库 SQL 不实现业务公式。
 
 ## 2. 技术决策
 
@@ -13,8 +13,8 @@
 | 应用形态 | 单仓库、单进程、模块化单体 |
 | Web | Next.js App Router、React、TypeScript strict |
 | UI | Tailwind CSS、shadcn/ui、中文业务界面 |
-| ORM / 数据库 | Prisma ORM / SQLite |
-| 后续数据库 | PostgreSQL，通过 repository 边界迁移 |
+| ORM / 数据库 | Prisma ORM；本地 SQLite、staging/production PostgreSQL 17 |
+| Schema / migration | 单一规范模型源、自动生成 PostgreSQL 派生 schema、provider-specific migration history |
 | 十进制计算 | `decimal.js`；传输层使用十进制字符串 |
 | 测试 | Vitest：domain、application、integration、关键流程 |
 | 质量门禁 | ESLint、TypeScript、Vitest、Next.js build |
@@ -28,7 +28,7 @@ flowchart TD
     APP["Application\nUse cases / validation / revisions"]
     DOMAIN["Domain\nPure calculations / ranking / rules"]
     REPO["Infrastructure\nPrisma repositories / transactions"]
-    DB[(SQLite)]
+    DB[(SQLite local / PostgreSQL staging)]
 
     UI --> APP
     APP --> DOMAIN
@@ -51,7 +51,7 @@ flowchart TD
 
 ### 3.3 Domain
 
-- `src/domain/performance`：最近 12 季度履约聚合。
+- `src/domain/performance`：最近 12 季度履约聚合，以及年度 × 四季度只读状态矩阵派生。
 - `src/domain/qingbiao`：参考报价、清标 K1、履约得分、报价排名、报价得分、总分和综合排名。
 - `src/domain/dingbiao`：Top N、定标 K1、M 值、与 M 差额、预测中标单位和模拟中标率。
 - `src/domain/analysis`：只基于保存结果生成决策派生数据和确定性文字总结。
@@ -62,8 +62,9 @@ Domain 代码不依赖 React、Next.js、Prisma、数据库或浏览器 API。
 ### 3.4 Infrastructure
 
 - `src/server/repositories` 实现 Prisma 查询与事务保存。
-- `src/server/db/prisma.ts` 提供 Prisma Client 单例和 SQLite adapter。
-- `prisma/schema.prisma` 是逻辑数据模型；`prisma/migrations` 是不可改写的数据库历史。
+- `src/server/db/prisma.ts` 提供 Prisma Client 单例，并按 URL 选择 SQLite 或 PostgreSQL adapter。
+- `prisma/schema.prisma` 是唯一人工维护的规范模型；PostgreSQL schema 由显式精度表生成。
+- `prisma/migrations` 与 `prisma/postgresql/migrations` 分别是不可改写的 SQLite / PostgreSQL 数据库历史。
 - `src/generated/prisma` 为生成文件，不承载手写业务规则。
 
 ## 4. 模块与路由
@@ -73,7 +74,7 @@ Domain 代码不依赖 React、Next.js、Prisma、数据库或浏览器 API。
 | 项目管理 | `/projects`、`/projects/new`、`/projects/[id]` | `Project` |
 | 参数设置 | `/projects/[id]/settings` | `ProjectRule`、项目类型关联 |
 | 候选单位 | `/projects/[id]/candidates` | `ProjectCandidate` |
-| 履约数据库 | `/performance` | `CompanyPerformance` |
+| 项目履约信息 | `/projects/[id]/performance` | 当前 Project 的 `CompanyPerformance`、`PerformanceQuarterArchive` |
 | 清标测算 | `/projects/[id]/qingbiao` | 清标 domain + 保存的清标场景/结果 |
 | 定标预测 | `/projects/[id]/dingbiao` | 定标 domain + 保存的定标场景/结果 |
 | 决策分析 | `/projects/[id]/analysis` | 只读保存的清标/定标结果 |
@@ -89,6 +90,8 @@ Project
   ├─ ProjectRule
   │    └─ ProjectRuleProjectType
   ├─ ProjectCandidate
+  │    └─ CompanyPerformance
+  ├─ PerformanceQuarterArchive
   ├─ QingbiaoExclusionRule × 4
   │    ├─ QingbiaoExclusionRuleCandidate
   │    └─ QingbiaoScenario × 4 K2
@@ -97,10 +100,11 @@ Project
   │              └─ DingbiaoResult
   └─ DingbiaoScenario
 
-CompanyPerformance（跨项目公共数据）
 ```
 
-v0.1.0 尚无独立 `Company` 表。`ProjectCandidate` 与 `CompanyPerformance` 由 application service 按规范化后的 `companyName` 和项目类型匹配；这是后续引入公司主数据 ID 时的迁移点。完整字段、关系和索引见 `docs/data-model.md`。
+v0.1.0 尚无独立 `Company` 主数据表。当前 `CompanyPerformance` 明确属于 Project，并通过 `(candidateId, projectId)` 复合外键关联同一项目的 `ProjectCandidate`；同名公司可以在不同项目保存不同履约历史。`companyName` 是审计快照，不再作为清标查询身份。完整字段、关系和索引见 `docs/data-model.md`。
+
+履约页必须先进入具体项目。一次 Server Component 请求把路由 `projectId` 传入 application/repository，同时读取该项目筛选后的明细、完整候选单位选项及项目季度 overview；年度、季度、项目类型、单位和关键词均在该 Project scope 内使用 AND 语义。overview repository 用固定两条带 `projectId` 的聚合查询取得 `year + quarter` 记录数与归档标记。React 只渲染服务端给出的 `saved / pending / empty` 状态；正式归档由薄 Server Action 校验输入后调用 project-scoped application service。无项目上下文的 `/performance` 只重定向项目列表。
 
 ### 5.1 场景身份
 
@@ -129,7 +133,7 @@ sourceQingbiaoScenarioId + finalistCount + finalDrawIndex
 ### 6.1 读取
 
 ```text
-Server Component → application query → Prisma repository → SQLite
+Server Component → application query → Prisma repository → configured database
                  ← decimal-string DTO ← persistence mapping ←
 ```
 
@@ -235,9 +239,9 @@ React 页面不包含上述公式。表单中的 Decimal 运算只负责百分�
 
 - Domain unit tests：公式、校验、边界值、并列排序和 Decimal 稳定性。
 - Application tests：前置条件、修订冲突、事务编排和失败不落库。
-- Integration tests：SQLite migration、Server Action/Route Handler、完整关键流程和刷新后持久化。
+- Integration tests：SQLite/PostgreSQL migration、repository transaction、Server Action/Route Handler、完整关键流程和刷新后持久化。
 - Excel regression tests：解析器和原工作簿对照；差异不通过修改程序规则静默迎合。
-- v0.1.0 尚未建立 Playwright 浏览器自动化，这是已知限制。
+- Playwright：3 条 Chromium 关键链路；可在隔离 SQLite 或 PostgreSQL `TEST_DATABASE_URL` 上复用。
 
 发布门禁固定为：
 
@@ -248,13 +252,15 @@ pnpm test
 pnpm build
 ```
 
-## 11. PostgreSQL 迁移边界
+## 11. SQLite / PostgreSQL 持久化边界
 
-- 保持 domain 的字符串 Decimal 契约不变。
-- 用 PostgreSQL adapter 替换 SQLite adapter，并为金额、比例和分数设置明确精度。
-- 重建 SQLite migration 中的部分唯一索引：每项目最多一个 `isOurCompany=true`，每定标场景最多一个 `isWinner=true`。
-- 使用同一组 domain、integration 和黄金回归测试验证迁移结果。
-- 不在 application service 中引入 SQLite 专属 SQL。
+- Domain 的字符串 Decimal、fraction、rank/winner 与 canonical 契约在两种数据库间完全相同。
+- PostgreSQL 金额/B/M/difference 使用 `NUMERIC(38,18)`，比例/评分/K1/平均值使用 `NUMERIC(38,20)`。
+- PostgreSQL baseline 已重建 CHECK 与部分唯一索引：每项目最多一个 `isOurCompany=true`、每定标场景最多一个 `isWinner=true`、nullable legacy 身份。
+- 所有 DateTime 在 PostgreSQL 使用 `TIMESTAMPTZ(3)`；应用与迁移统一 UTC。
+- 同一 Full Business Golden 和 repository integration test 可切换 provider；Cross-DB 比较不使用 UI rounded value。
+- Application service 不含 SQLite/PostgreSQL 专属 SQL；provider-specific SQL 只存在于 migration / migration tool。
+- 维护和部署细节见 `docs/postgresql-migration.md`。
 
 ## 12. Step 5：新版清标端到端架构（2026-08-24）
 
@@ -282,7 +288,7 @@ ranking candidate set = ALL_CANDIDATES
 
 场景以 `(exclusionRuleId, qingbiaoK2)` upsert。重算先按具体 `scenarioId` 删除旧 `QingbiaoResult`，再写入该场景完整结果，既不会产生第 17 个场景，也不会触及其他项目。`getQingbiaoScenarioCatalog(projectId)` 返回 16 项带 `scenarioId` 和每项 `finalRank` 的 Top5，作为 Step 6 定标来源选择的正式接口。
 
-页面用 `QingbiaoScenario.inputRevision` 与 `Project.qingbiaoInputRevision` 区分“尚未计算 / 当前有效 / 已过期”。规则、项目参数和候选单位写入已接入修订号；公共 `CompanyPerformance` 的新增或修改尚不能反向定位所有受影响项目，因此履约变化导致的自动失效仍是后续一致性工作。
+页面用 `QingbiaoScenario.inputRevision` 与 `Project.qingbiaoInputRevision` 区分“尚未计算 / 当前有效 / 已过期”。规则、项目参数、候选单位和项目履约写入都只递增当前 Project 的清标/定标输入修订号。清标履约读取显式使用 `projectId + candidateId + projectType`，最近 12 季度公式保持不变，不存在同名公司跨项目混入。
 
 新版清标、定标和 analysis 已不再假设项目只有 4 个 K2 场景。底层 `isLegacy` 标记仅用于保留历史兼容数据；当前定标目录和全场景 analysis 都按明确的 `sourceQingbiaoScenarioId`、规则版本与输入修订读取，不按 `ruleIndex=1` 或 `isLegacy=true` 筛选，也不赋予规则 1 特殊业务含义。
 
@@ -292,7 +298,7 @@ ranking candidate set = ALL_CANDIDATES
 - 最近 12 季度的正式加权规则。
 - 正式分析报告导出和版本历史。
 - 用户认证、权限和审计。
-- PostgreSQL 生产部署、备份恢复和浏览器端自动化。
+- private staging 的真实 PostgreSQL 部署、恢复演练与人工验收。
 
 ## 14. Step 7：全量定标与派生决策分析（2026-08-24）
 

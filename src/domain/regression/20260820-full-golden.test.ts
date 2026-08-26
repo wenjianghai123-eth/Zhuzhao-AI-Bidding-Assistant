@@ -24,6 +24,7 @@ import {
   createAnalysisExportWorkbook,
   EXCEL_NUMBER_FORMATS,
 } from "@/server/exports/analysis-excel-exporter";
+import { assertPostgresqlTestDatabaseTarget } from "@/server/db/database-target-safety";
 
 type QingbiaoRuntimeModule =
   typeof import("@/server/application/qingbiao-runtime-service");
@@ -46,6 +47,7 @@ let qingbiaoRuntime: QingbiaoRuntimeModule | undefined;
 let dingbiaoRuntime: DingbiaoRuntimeModule | undefined;
 let analysisRuntime: AnalysisRuntimeModule | undefined;
 let analysisDeliveryRuntime: AnalysisDeliveryRuntimeModule | undefined;
+let usesExternalPostgresql = false;
 
 function applyMigrations(databasePath: string) {
   const database = new Database(databasePath);
@@ -113,14 +115,31 @@ function dingbiaoIdentity(
   return `${ruleIndex}:${qingbiaoK2Value}:${finalistCount}:${finalDrawIndex}`;
 }
 
+async function cleanGoldenData(client: PrismaClient) {
+  await client.project.deleteMany({ where: { id: golden.project.id } });
+}
+
 beforeAll(async () => {
   previousDatabaseUrl = process.env.DATABASE_URL;
   temporaryDirectory = mkdtempSync(
     join(tmpdir(), "zhuzhao-20260820-full-golden-"),
   );
-  const databasePath = join(temporaryDirectory, "golden.db");
-  applyMigrations(databasePath);
-  process.env.DATABASE_URL = `file:${databasePath.replaceAll("\\", "/")}`;
+  usesExternalPostgresql = process.env.POSTGRES_GOLDEN === "1";
+  if (usesExternalPostgresql) {
+    assertPostgresqlTestDatabaseTarget(
+      process.env.TEST_DATABASE_URL,
+      "PostgreSQL Full Business Golden",
+    );
+    if (process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL) {
+      throw new Error(
+        "PostgreSQL Full Business Golden requires DATABASE_URL to equal TEST_DATABASE_URL.",
+      );
+    }
+  } else {
+    const databasePath = join(temporaryDirectory, "golden.db");
+    applyMigrations(databasePath);
+    process.env.DATABASE_URL = `file:${databasePath.replaceAll("\\", "/")}`;
+  }
   vi.resetModules();
 
   const [
@@ -142,9 +161,15 @@ beforeAll(async () => {
   dingbiaoRuntime = dingbiaoModule;
   analysisRuntime = analysisModule;
   analysisDeliveryRuntime = analysisDeliveryModule;
+  if (usesExternalPostgresql) {
+    await cleanGoldenData(databaseModule.prisma);
+  }
 }, 30_000);
 
 afterAll(async () => {
+  if (usesExternalPostgresql && prisma) {
+    await cleanGoldenData(prisma);
+  }
   await prisma?.$disconnect();
   if (previousDatabaseUrl === undefined) {
     delete process.env.DATABASE_URL;
@@ -206,6 +231,8 @@ describe("Golden Case 20260820-A full business flow", () => {
             );
           }
           return {
+            projectId: golden.project.id,
+            candidateId: candidate.id,
             companyName: candidate.companyName,
             projectType: "CURTAIN_WALL" as const,
             classificationLevel: "A",
@@ -782,6 +809,246 @@ describe("Golden Case 20260820-A full business flow", () => {
       canonicalMRow.getCell(5).numFmt,
       EXCEL_NUMBER_FORMATS.text,
     );
+
+    const persistedQingbiaoCanonical = (
+      await client.qingbiaoScenario.findMany({
+        where: { projectId: golden.project.id },
+        select: {
+          qingbiaoK2: true,
+          referencePriceB: true,
+          referencePriceBCanonical: true,
+          qingbiaoK1: true,
+          qingbiaoK1Canonical: true,
+          exclusionRule: { select: { ruleIndex: true } },
+          results: {
+            select: {
+              candidateId: true,
+              performanceAverage: true,
+              performanceAverageCanonical: true,
+              performanceScore: true,
+              performanceScoreCanonical: true,
+              priceDifference: true,
+              priceDifferenceCanonical: true,
+              priceScore: true,
+              priceScoreCanonical: true,
+              totalScore: true,
+              totalScoreCanonical: true,
+              finalRank: true,
+            },
+            orderBy: [{ finalRank: "asc" }, { candidateId: "asc" }],
+          },
+        },
+      })
+    ).toSorted(
+      (left, right) =>
+        (left.exclusionRule?.ruleIndex ?? 0) -
+          (right.exclusionRule?.ruleIndex ?? 0) ||
+        left.qingbiaoK2 - right.qingbiaoK2,
+    );
+    for (const scenario of persistedQingbiaoCanonical) {
+      const identity = qingbiaoIdentity(
+        scenario.exclusionRule?.ruleIndex ?? 0,
+        scenario.qingbiaoK2,
+      );
+      expectAt(
+        `Qingbiao canonical ${identity}`,
+        [scenario.qingbiaoK1.toString(), scenario.referencePriceB.toString()],
+        [scenario.qingbiaoK1Canonical, scenario.referencePriceBCanonical],
+      );
+      for (const result of scenario.results) {
+        expectAt(
+          `Qingbiao result canonical ${identity}/${result.candidateId}`,
+          [
+            result.performanceAverage.toString(),
+            result.performanceScore.toString(),
+            result.priceDifference.toString(),
+            result.priceScore.toString(),
+            result.totalScore.toString(),
+          ],
+          [
+            result.performanceAverageCanonical,
+            result.performanceScoreCanonical,
+            result.priceDifferenceCanonical,
+            result.priceScoreCanonical,
+            result.totalScoreCanonical,
+          ],
+        );
+      }
+    }
+
+    const persistedDingbiaoCanonical = (
+      await client.dingbiaoScenario.findMany({
+        where: { projectId: golden.project.id },
+        select: {
+          finalistCount: true,
+          finalDrawIndex: true,
+          finalDrawValue: true,
+          finalDrawValueCanonical: true,
+          dingbiaoK1: true,
+          dingbiaoK1Canonical: true,
+          benchmarkPriceM: true,
+          benchmarkPriceMCanonical: true,
+          sourceQingbiaoScenario: {
+            select: {
+              qingbiaoK2: true,
+              exclusionRule: { select: { ruleIndex: true } },
+            },
+          },
+          results: {
+            select: {
+              candidateId: true,
+              bidPrice: true,
+              bidPriceCanonical: true,
+              netDiscountRateSnapshot: true,
+              netDiscountRateSnapshotCanonical: true,
+              differenceToM: true,
+              differenceToMCanonical: true,
+              rank: true,
+              isWinner: true,
+            },
+            orderBy: [{ rank: "asc" }, { candidateId: "asc" }],
+          },
+        },
+      })
+    ).toSorted((left, right) => {
+      const leftSource = left.sourceQingbiaoScenario;
+      const rightSource = right.sourceQingbiaoScenario;
+      return (
+        (leftSource?.exclusionRule?.ruleIndex ?? 0) -
+          (rightSource?.exclusionRule?.ruleIndex ?? 0) ||
+        (leftSource?.qingbiaoK2 ?? 0) - (rightSource?.qingbiaoK2 ?? 0) ||
+        right.finalistCount - left.finalistCount ||
+        (left.finalDrawIndex ?? 0) - (right.finalDrawIndex ?? 0)
+      );
+    });
+    for (const scenario of persistedDingbiaoCanonical) {
+      const identity = dingbiaoIdentity(
+        scenario.sourceQingbiaoScenario?.exclusionRule?.ruleIndex ?? 0,
+        scenario.sourceQingbiaoScenario?.qingbiaoK2 ?? 0,
+        scenario.finalistCount,
+        scenario.finalDrawIndex ?? 0,
+      );
+      expectAt(
+        `Dingbiao canonical ${identity}`,
+        [
+          scenario.finalDrawValue.toString(),
+          scenario.dingbiaoK1.toString(),
+          scenario.benchmarkPriceM.toString(),
+        ],
+        [
+          scenario.finalDrawValueCanonical,
+          scenario.dingbiaoK1Canonical,
+          scenario.benchmarkPriceMCanonical,
+        ],
+      );
+      for (const result of scenario.results) {
+        expectAt(
+          `Dingbiao result canonical ${identity}/${result.candidateId}`,
+          [
+            result.bidPrice.toString(),
+            result.netDiscountRateSnapshot?.toString() ?? null,
+            result.differenceToM.toString(),
+          ],
+          [
+            result.bidPriceCanonical,
+            result.netDiscountRateSnapshotCanonical,
+            result.differenceToMCanonical,
+          ],
+        );
+      }
+    }
+
+    const snapshotPath = process.env.GOLDEN_SNAPSHOT_PATH;
+    if (snapshotPath) {
+      const snapshot = {
+        qingbiao: [...actualQingbiaoByIdentity.entries()]
+          .toSorted(([left], [right]) => left.localeCompare(right))
+          .map(([identity, scenario]) => ({
+            identity,
+            qingbiaoK1Fraction: scenario.qingbiaoK1Fraction,
+            referencePriceB: scenario.referencePriceB,
+            top5CandidateIds: scenario.top5.map(({ candidateId }) => candidateId),
+            orderedResults: scenario.orderedResults.map((result) => [
+              result.candidateId,
+              result.priceDifference,
+              result.priceRank,
+              result.priceScore,
+              result.totalScore,
+              result.finalRank,
+            ]),
+          })),
+        dingbiao: [...actualDingbiaoByIdentity.entries()]
+          .toSorted(([left], [right]) => left.localeCompare(right))
+          .map(([identity, scenario]) => ({ identity, scenario })),
+        analysis: {
+          globalWinMetric: analysis.globalWinMetric,
+          qingbiaoRankStatistics: analysis.qingbiaoRankStatistics,
+          qingbiaoStability: analysis.qingbiaoStability.map((metric) => [
+            metric.threshold,
+            metric.sourceCount,
+            metric.participatingSourceCount,
+            metric.share,
+          ]),
+          byExclusionRule: analysis.byExclusionRule.map((item, index) => [
+            index + 1,
+            item.validScenarioCount,
+            item.ourWinCount,
+            item.simulationWinRate,
+            item.qingbiaoRankStatistics?.bestRank ?? null,
+            item.qingbiaoRankStatistics?.worstRank ?? null,
+            item.qingbiaoRankStatistics?.averageRank ?? null,
+          ]),
+          byQingbiaoK2: analysis.byQingbiaoK2.map((item, index) => [
+            index,
+            item.validScenarioCount,
+            item.ourWinCount,
+            item.simulationWinRate,
+          ]),
+          byFinalistCount: analysis.byFinalistCount.map((item) => [
+            item.key,
+            item.validScenarioCount,
+            item.ourWinCount,
+            item.simulationWinRate,
+          ]),
+          byFinalDrawIndex: analysis.byFinalDrawIndex.map((item) => [
+            item.key,
+            item.validScenarioCount,
+            item.ourWinCount,
+            item.simulationWinRate,
+          ]),
+          sourceAnalysis: analysis.sourceAnalysis.map((source) => [
+            source.ruleIndex,
+            source.qingbiaoK2Value,
+            source.ourQingbiaoRank,
+            source.ourWinCount,
+            source.finalistBreakdowns.map(({ ourWinCount }) => ourWinCount),
+            source.simulationWinRate,
+          ]),
+          competitorStatistics: analysis.competitorStatistics.map((item) => [
+            item.candidateId,
+            item.winnerCount,
+            item.winShare,
+          ]),
+          qingbiaoLeaderStatistics: analysis.qingbiaoLeaderStatistics.map(
+            (item) => [item.candidateId, item.top1Count, item.top1Share],
+          ),
+          primaryCompetitors: analysis.primaryCompetitors.map(
+            ({ candidateId }) => candidateId,
+          ),
+          bestSource: analysis.bestSource
+            ? [analysis.bestSource.ruleIndex, analysis.bestSource.qingbiaoK2Value]
+            : null,
+          worstSource: analysis.worstSource
+            ? [analysis.worstSource.ruleIndex, analysis.worstSource.qingbiaoK2Value]
+            : null,
+        },
+        canonical: {
+          qingbiao: persistedQingbiaoCanonical,
+          dingbiao: persistedDingbiaoCanonical,
+        },
+      };
+      writeFileSync(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+    }
 
     console.log("Qingbiao 16/16 matched");
     console.log("Dingbiao 144/144 matched");

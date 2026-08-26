@@ -8,9 +8,11 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
 import { fullGolden20260820Fixture as golden } from "@/domain/regression/fixtures/20260820-full-golden.fixture";
+import { assertPostgresqlTestDatabaseTarget } from "@/server/db/database-target-safety";
 import {
   E2E_DATABASE_PATH,
   E2E_DATABASE_URL,
+  E2E_USES_POSTGRESQL,
 } from "./e2e-environment";
 
 function assertTemporaryDatabasePath() {
@@ -21,6 +23,9 @@ function assertTemporaryDatabasePath() {
 }
 
 function removeE2EDatabaseFiles() {
+  if (E2E_USES_POSTGRESQL) {
+    return;
+  }
   assertTemporaryDatabasePath();
   for (const suffix of ["", "-journal", "-shm", "-wal"]) {
     rmSync(`${E2E_DATABASE_PATH}${suffix}`, { force: true });
@@ -28,6 +33,9 @@ function removeE2EDatabaseFiles() {
 }
 
 function applyMigrations() {
+  if (E2E_USES_POSTGRESQL) {
+    return;
+  }
   const database = new Database(E2E_DATABASE_PATH);
   try {
     const migrationsDirectory = join(process.cwd(), "prisma", "migrations");
@@ -60,6 +68,7 @@ async function seedGoldenProject() {
   ]);
   const { prisma } = databaseModule;
   try {
+    await prisma.project.deleteMany({ where: { id: golden.project.id } });
     await prisma.project.create({
       data: {
         id: golden.project.id,
@@ -99,6 +108,8 @@ async function seedGoldenProject() {
             throw new Error("Golden E2E performance fixture is incomplete.");
           }
           return {
+            projectId: golden.project.id,
+            candidateId: candidate.id,
             companyName: candidate.companyName,
             projectType: "CURTAIN_WALL" as const,
             classificationLevel: "A",
@@ -152,6 +163,12 @@ async function seedGoldenProject() {
 }
 
 export default async function globalSetup() {
+  if (E2E_USES_POSTGRESQL) {
+    assertPostgresqlTestDatabaseTarget(
+      E2E_DATABASE_URL,
+      "PostgreSQL Playwright E2E",
+    );
+  }
   removeE2EDatabaseFiles();
   applyMigrations();
   await seedGoldenProject();

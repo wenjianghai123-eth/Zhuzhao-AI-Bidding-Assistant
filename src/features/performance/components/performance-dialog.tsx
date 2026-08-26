@@ -28,7 +28,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { ProjectPerformanceCandidate } from "@/domain/performance/company-performance";
+import { isProjectTypeValue } from "@/domain/projects/project-settings";
 import type { ProjectTypeValue } from "@/domain/projects/project-settings";
+import { PERFORMANCE_QUARTER_OPTIONS } from "@/features/performance/performance-filter-schema";
 import {
   createEmptyPerformanceFormValues,
   getPerformanceFormFieldErrors,
@@ -44,12 +47,15 @@ import { cn } from "@/lib/utils";
 
 type TextPerformanceFormField = Exclude<
   PerformanceFormField,
-  "projectType" | "quarter"
+  "candidateId" | "projectType" | "quarter"
 >;
 
 type PerformanceDialogProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
+  projectId: string;
+  candidates: readonly ProjectPerformanceCandidate[];
+  projectTypes: readonly ProjectTypeValue[];
 } &
   (
     | { mode: "create" }
@@ -58,12 +64,6 @@ type PerformanceDialogProps = {
         record: PerformanceListItem;
       }
   );
-
-function isProjectTypeValue(value: string): value is ProjectTypeValue {
-  return PERFORMANCE_PROJECT_TYPE_OPTIONS.some(
-    (option) => option.value === value,
-  );
-}
 
 function isQuarterValue(value: string): value is "1" | "2" | "3" | "4" {
   return value === "1" || value === "2" || value === "3" || value === "4";
@@ -82,7 +82,7 @@ function valuesAreEqual(
   right: PerformanceFormValues,
 ) {
   return (
-    left.companyName.trim() === right.companyName.trim() &&
+    left.candidateId === right.candidateId &&
     left.projectType === right.projectType &&
     left.classificationLevel.trim() === right.classificationLevel.trim() &&
     left.year === right.year &&
@@ -120,7 +120,10 @@ export function PerformanceDialog(props: PerformanceDialogProps) {
   const submissionLock = useRef(false);
   const initialValues =
     props.mode === "create"
-      ? createEmptyPerformanceFormValues()
+      ? createEmptyPerformanceFormValues(
+          props.candidates[0]?.id ?? "",
+          props.projectTypes[0] ?? "CURTAIN_WALL",
+        )
       : { ...props.record };
   const [values, setValues] = useState<PerformanceFormValues>(initialValues);
   const [fieldErrors, setFieldErrors] = useState<PerformanceFormFieldErrors>({});
@@ -166,8 +169,12 @@ export function PerformanceDialog(props: PerformanceDialogProps) {
       try {
         const result =
           props.mode === "create"
-            ? await createPerformanceAction(formData)
-            : await updatePerformanceAction(props.record.id, formData);
+            ? await createPerformanceAction(props.projectId, formData)
+            : await updatePerformanceAction(
+                props.projectId,
+                props.record.id,
+                formData,
+              );
 
         if (result.status === "invalid") {
           setFieldErrors(result.fieldErrors);
@@ -246,9 +253,38 @@ export function PerformanceDialog(props: PerformanceDialogProps) {
 
           <fieldset className="grid gap-4 sm:grid-cols-2" disabled={isPending}>
             <div className="sm:col-span-2">
-              {textInput("companyName", "单位名称", {
-                placeholder: "请输入单位名称",
-              })}
+              <div className="space-y-2">
+                <Label htmlFor="performance-candidateId">履约单位</Label>
+                <Select
+                  name="candidateId"
+                  value={values.candidateId}
+                  onValueChange={(candidateId) => {
+                    setValues((current) => ({ ...current, candidateId }));
+                    clearFieldError("candidateId");
+                  }}
+                >
+                  <SelectTrigger
+                    id="performance-candidateId"
+                    className="w-full"
+                    aria-invalid={Boolean(fieldErrors.candidateId)}
+                    aria-describedby={
+                      fieldErrors.candidateId
+                        ? "performance-candidateId-error"
+                        : undefined
+                    }
+                  >
+                    <SelectValue placeholder="请选择当前项目候选单位" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {props.candidates.map((candidate) => (
+                      <SelectItem key={candidate.id} value={candidate.id}>
+                        {candidate.companyName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldError field="candidateId" errors={fieldErrors} />
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -279,7 +315,9 @@ export function PerformanceDialog(props: PerformanceDialogProps) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PERFORMANCE_PROJECT_TYPE_OPTIONS.map((option) => (
+                  {PERFORMANCE_PROJECT_TYPE_OPTIONS.filter((option) =>
+                    props.projectTypes.includes(option.value),
+                  ).map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>
@@ -317,9 +355,12 @@ export function PerformanceDialog(props: PerformanceDialogProps) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {["1", "2", "3", "4"].map((quarter) => (
-                    <SelectItem key={quarter} value={quarter}>
-                      第 {quarter} 季度
+                  {PERFORMANCE_QUARTER_OPTIONS.map((option) => (
+                    <SelectItem
+                      key={option.value}
+                      value={option.value.toString()}
+                    >
+                      {option.label}
                     </SelectItem>
                   ))}
                 </SelectContent>

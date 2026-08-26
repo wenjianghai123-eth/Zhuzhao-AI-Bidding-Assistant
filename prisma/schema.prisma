@@ -30,6 +30,8 @@ model Project {
   updatedAt              DateTime                @updatedAt
   rule                   ProjectRule?
   candidates             ProjectCandidate[]
+  performanceRecords     CompanyPerformance[]
+  performanceArchives    PerformanceQuarterArchive[]
   qingbiaoExclusionRules QingbiaoExclusionRule[]
   qingbiaoScenarios      QingbiaoScenario[]
   dingbiaoScenarios      DingbiaoScenario[]
@@ -39,18 +41,24 @@ model Project {
 }
 
 model ProjectRule {
-  projectId          String                   @id
-  maxBidPrice        Decimal
-  nonCompetitiveFee  Decimal
-  totalBidPriceScore Decimal
-  rankDeduction      Decimal
-  finalDrawValue1    Decimal
-  finalDrawValue2    Decimal
-  finalDrawValue3    Decimal
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @updatedAt
-  project            Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectTypes       ProjectRuleProjectType[]
+  projectId                 String                   @id
+  maxBidPrice               Decimal
+  nonCompetitiveFee         Decimal
+  qingbiaoDrawValue1        Decimal                  @default(0)
+  qingbiaoDrawValue2        Decimal                  @default(0.01)
+  qingbiaoDrawValue3        Decimal                  @default(0.02)
+  qingbiaoDrawValue4        Decimal                  @default(0.03)
+  totalBidPriceScore        Decimal
+  similarExperienceScore   Decimal                  @default(0)
+  otherScore                Decimal                  @default(0)
+  rankDeduction             Decimal
+  finalDrawValue1           Decimal
+  finalDrawValue2           Decimal
+  finalDrawValue3           Decimal
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  project                   Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectTypes              ProjectRuleProjectType[]
 }
 
 model ProjectRuleProjectType {
@@ -80,8 +88,10 @@ model ProjectCandidate {
   qingbiaoExclusions     QingbiaoExclusionRuleCandidate[]
   qingbiaoResults        QingbiaoResult[]
   dingbiaoResults        DingbiaoResult[]
+  performanceRecords     CompanyPerformance[]
 
   @@unique([projectId, companyName])
+  @@unique([id, projectId])
   @@index([projectId])
   @@index([companyName])
   @@index([projectId, isOurCompany])
@@ -89,6 +99,8 @@ model ProjectCandidate {
 
 model CompanyPerformance {
   id                  String      @id @default(cuid())
+  projectId           String?
+  candidateId         String?
   companyName         String
   projectType         ProjectType
   classificationLevel String
@@ -97,11 +109,28 @@ model CompanyPerformance {
   score               Decimal
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
+  project             Project?    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  candidate           ProjectCandidate? @relation(fields: [candidateId, projectId], references: [id, projectId], onDelete: Cascade)
 
-  @@unique([companyName, projectType, year, quarter])
+  @@unique([projectId, candidateId, projectType, year, quarter])
+  @@index([projectId, year, quarter])
+  @@index([projectId, candidateId, projectType])
   @@index([companyName, projectType])
-  @@index([projectType, year, quarter])
-  @@index([year, quarter])
+}
+
+model PerformanceQuarterArchive {
+  id        String   @id @default(cuid())
+  projectId String?
+  year      Int
+  quarter   Int
+  savedAt   DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, year, quarter])
+  @@index([projectId, savedAt])
+  @@index([savedAt])
 }
 
 model QingbiaoExclusionRule {
