@@ -42,6 +42,10 @@ export interface ProjectTypePerformanceAverage {
   quarterCount: number;
 }
 
+export interface PerformanceQuarterAverage extends PerformanceScoreRecord {
+  detailCount: number;
+}
+
 export type RecentPerformanceAverageResult =
   | {
       status: "complete";
@@ -83,6 +87,78 @@ function averageScores(records: readonly PerformanceScoreRecord[]) {
   return total.dividedBy(records.length).toString();
 }
 
+export function calculatePerformanceQuarterAverages(
+  records: readonly PerformanceScoreRecord[],
+): readonly PerformanceQuarterAverage[] {
+  const grouped = new Map<string, PerformanceScoreRecord[]>();
+
+  for (const record of records) {
+    const key = `${record.projectType}:${record.year}:${record.quarter}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), record]);
+  }
+
+  return [...grouped.values()]
+    .map((quarterRecords) => {
+      const first = quarterRecords[0];
+      if (!first) {
+        throw new Error("Performance quarter group cannot be empty.");
+      }
+      return {
+        projectType: first.projectType,
+        year: first.year,
+        quarter: first.quarter,
+        score: averageScores(quarterRecords),
+        detailCount: quarterRecords.length,
+      };
+    })
+    .toSorted(compareQuarterDescending);
+}
+
+export function combineProjectTypePerformanceAverages(
+  projectTypes: readonly ProjectTypeValue[],
+  projectTypeAverages: readonly ProjectTypePerformanceAverage[],
+): RecentPerformanceAverageResult {
+  const uniqueProjectTypes = [...new Set(projectTypes)];
+  if (uniqueProjectTypes.length === 0) {
+    return {
+      status: "no_project_types",
+      averageScore: null,
+      projectTypeAverages: [],
+      missingProjectTypes: [],
+    };
+  }
+
+  const averagesByType = new Map(
+    projectTypeAverages.map((average) => [average.projectType, average]),
+  );
+  const availableAverages = uniqueProjectTypes.flatMap((projectType) => {
+    const average = averagesByType.get(projectType);
+    return average ? [average] : [];
+  });
+  const missingProjectTypes = uniqueProjectTypes.filter(
+    (projectType) => !averagesByType.has(projectType),
+  );
+  if (missingProjectTypes.length > 0) {
+    return {
+      status: "missing_data",
+      averageScore: null,
+      projectTypeAverages: availableAverages,
+      missingProjectTypes,
+    };
+  }
+
+  const total = availableAverages.reduce(
+    (sum, item) => sum.plus(new Decimal(item.averageScore)),
+    new Decimal(0),
+  );
+  return {
+    status: "complete",
+    averageScore: total.dividedBy(availableAverages.length).toString(),
+    projectTypeAverages: availableAverages,
+    missingProjectTypes: [],
+  };
+}
+
 export function calculateRecentPerformanceAverage(
   projectTypes: readonly ProjectTypeValue[],
   records: readonly PerformanceScoreRecord[],
@@ -99,16 +175,14 @@ export function calculateRecentPerformanceAverage(
   }
 
   const projectTypeAverages: ProjectTypePerformanceAverage[] = [];
-  const missingProjectTypes: ProjectTypeValue[] = [];
+  const quarterAverages = calculatePerformanceQuarterAverages(records);
 
   for (const projectType of uniqueProjectTypes) {
-    const recentRecords = records
+    const recentRecords = quarterAverages
       .filter((record) => record.projectType === projectType)
-      .toSorted(compareQuarterDescending)
       .slice(0, 12);
 
     if (recentRecords.length === 0) {
-      missingProjectTypes.push(projectType);
       continue;
     }
 
@@ -119,26 +193,8 @@ export function calculateRecentPerformanceAverage(
     });
   }
 
-  if (missingProjectTypes.length > 0) {
-    return {
-      status: "missing_data",
-      averageScore: null,
-      projectTypeAverages,
-      missingProjectTypes,
-    };
-  }
-
-  const totalOfProjectTypeAverages = projectTypeAverages.reduce(
-    (sum, item) => sum.plus(new Decimal(item.averageScore)),
-    new Decimal(0),
-  );
-
-  return {
-    status: "complete",
-    averageScore: totalOfProjectTypeAverages
-      .dividedBy(projectTypeAverages.length)
-      .toString(),
+  return combineProjectTypePerformanceAverages(
+    uniqueProjectTypes,
     projectTypeAverages,
-    missingProjectTypes,
-  };
+  );
 }

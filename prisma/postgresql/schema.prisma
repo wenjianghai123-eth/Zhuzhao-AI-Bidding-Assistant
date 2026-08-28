@@ -24,44 +24,46 @@ enum ProjectType {
 }
 
 model Project {
-  id                     String                  @id @default(cuid())
-  name                   String
-  status                 ProjectStatus           @default(DRAFT)
-  qingbiaoInputRevision  Int                     @default(1)
-  dingbiaoInputRevision  Int                     @default(1)
-  createdAt              DateTime @db.Timestamptz(3)                @default(now())
-  updatedAt              DateTime @db.Timestamptz(3)                @updatedAt
-  rule                   ProjectRule?
-  candidates             ProjectCandidate[]
-  performanceRecords     CompanyPerformance[]
-  performanceArchives    PerformanceQuarterArchive[]
-  qingbiaoExclusionRules QingbiaoExclusionRule[]
-  qingbiaoScenarios      QingbiaoScenario[]
-  dingbiaoScenarios      DingbiaoScenario[]
+  id                          String                       @id @default(cuid())
+  name                        String
+  status                      ProjectStatus                @default(DRAFT)
+  performanceInputRevision    Int                          @default(1)
+  qingbiaoInputRevision       Int                          @default(1)
+  dingbiaoInputRevision       Int                          @default(1)
+  createdAt                   DateTime @db.Timestamptz(3)                     @default(now())
+  updatedAt                   DateTime @db.Timestamptz(3)                     @updatedAt
+  rule                        ProjectRule?
+  candidates                  ProjectCandidate[]
+  performanceRecords          CompanyPerformance[]
+  performanceArchives         PerformanceQuarterArchive[]
+  performanceWeightedSnapshot PerformanceWeightedSnapshot?
+  qingbiaoExclusionRules      QingbiaoExclusionRule[]
+  qingbiaoScenarios           QingbiaoScenario[]
+  dingbiaoScenarios           DingbiaoScenario[]
 
   @@index([status])
   @@index([createdAt])
 }
 
 model ProjectRule {
-  projectId                 String                   @id
-  maxBidPrice               Decimal @db.Decimal(38, 18)
-  nonCompetitiveFee         Decimal @db.Decimal(38, 18)
-  qingbiaoDrawValue1        Decimal @db.Decimal(38, 20)                  @default(0)
-  qingbiaoDrawValue2        Decimal @db.Decimal(38, 20)                  @default(0.01)
-  qingbiaoDrawValue3        Decimal @db.Decimal(38, 20)                  @default(0.02)
-  qingbiaoDrawValue4        Decimal @db.Decimal(38, 20)                  @default(0.03)
-  totalBidPriceScore        Decimal @db.Decimal(38, 20)
-  similarExperienceScore   Decimal @db.Decimal(38, 20)                  @default(0)
-  otherScore                Decimal @db.Decimal(38, 20)                  @default(0)
-  rankDeduction             Decimal @db.Decimal(38, 20)
-  finalDrawValue1           Decimal @db.Decimal(38, 20)
-  finalDrawValue2           Decimal @db.Decimal(38, 20)
-  finalDrawValue3           Decimal @db.Decimal(38, 20)
-  createdAt                 DateTime @db.Timestamptz(3)                 @default(now())
-  updatedAt                 DateTime @db.Timestamptz(3)                 @updatedAt
-  project                   Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectTypes              ProjectRuleProjectType[]
+  projectId              String                   @id
+  maxBidPrice            Decimal @db.Decimal(38, 18)
+  nonCompetitiveFee      Decimal @db.Decimal(38, 18)
+  qingbiaoDrawValue1     Decimal @db.Decimal(38, 20)                  @default(0)
+  qingbiaoDrawValue2     Decimal @db.Decimal(38, 20)                  @default(0.01)
+  qingbiaoDrawValue3     Decimal @db.Decimal(38, 20)                  @default(0.02)
+  qingbiaoDrawValue4     Decimal @db.Decimal(38, 20)                  @default(0.03)
+  totalBidPriceScore     Decimal @db.Decimal(38, 20)
+  similarExperienceScore Decimal @db.Decimal(38, 20)                  @default(0)
+  otherScore             Decimal @db.Decimal(38, 20)                  @default(0)
+  rankDeduction          Decimal @db.Decimal(38, 20)
+  finalDrawValue1        Decimal @db.Decimal(38, 20)
+  finalDrawValue2        Decimal @db.Decimal(38, 20)
+  finalDrawValue3        Decimal @db.Decimal(38, 20)
+  createdAt              DateTime @db.Timestamptz(3)                 @default(now())
+  updatedAt              DateTime @db.Timestamptz(3)                 @updatedAt
+  project                Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectTypes           ProjectRuleProjectType[]
 }
 
 model ProjectRuleProjectType {
@@ -74,24 +76,25 @@ model ProjectRuleProjectType {
 }
 
 model ProjectCandidate {
-  id                     String                           @id @default(cuid())
-  projectId              String
-  companyName            String
-  bidPrice               Decimal @db.Decimal(38, 18)
-  netDiscountRate        Decimal @db.Decimal(38, 20)
-  trademarkScore         Decimal @db.Decimal(38, 20)
-  technicalScore         Decimal @db.Decimal(38, 20)
-  similarExperienceScore Decimal @db.Decimal(38, 20)
-  otherScore             Decimal @db.Decimal(38, 20)
-  isOurCompany           Boolean                          @default(false)
-  createdAt              DateTime @db.Timestamptz(3)                         @default(now())
-  updatedAt              DateTime @db.Timestamptz(3)                         @updatedAt
-  project                Project                          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  qingbiaoSelections     QingbiaoScenarioCandidate[]
-  qingbiaoExclusions     QingbiaoExclusionRuleCandidate[]
-  qingbiaoResults        QingbiaoResult[]
-  dingbiaoResults        DingbiaoResult[]
-  performanceRecords     CompanyPerformance[]
+  id                        String                           @id @default(cuid())
+  projectId                 String
+  companyName               String
+  bidPrice                  Decimal @db.Decimal(38, 18)
+  netDiscountRate           Decimal @db.Decimal(38, 20)
+  trademarkScore            Decimal @db.Decimal(38, 20)
+  technicalScore            Decimal @db.Decimal(38, 20)
+  similarExperienceScore    Decimal @db.Decimal(38, 20)
+  otherScore                Decimal @db.Decimal(38, 20)
+  isOurCompany              Boolean                          @default(false)
+  createdAt                 DateTime @db.Timestamptz(3)                         @default(now())
+  updatedAt                 DateTime @db.Timestamptz(3)                         @updatedAt
+  project                   Project                          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  qingbiaoSelections        QingbiaoScenarioCandidate[]
+  qingbiaoExclusions        QingbiaoExclusionRuleCandidate[]
+  qingbiaoResults           QingbiaoResult[]
+  dingbiaoResults           DingbiaoResult[]
+  performanceRecords        CompanyPerformance[]
+  performanceWeightedScores PerformanceWeightedScore[]
 
   @@unique([projectId, companyName])
   @@unique([id, projectId])
@@ -101,7 +104,7 @@ model ProjectCandidate {
 }
 
 model CompanyPerformance {
-  id                  String      @id @default(cuid())
+  id                  String            @id @default(cuid())
   projectId           String?
   candidateId         String?
   companyName         String
@@ -110,12 +113,12 @@ model CompanyPerformance {
   year                Int
   quarter             Int
   score               Decimal @db.Decimal(38, 20)
-  createdAt           DateTime @db.Timestamptz(3)    @default(now())
-  updatedAt           DateTime @db.Timestamptz(3)    @updatedAt
-  project             Project?    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt           DateTime @db.Timestamptz(3)          @default(now())
+  updatedAt           DateTime @db.Timestamptz(3)          @updatedAt
+  project             Project?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   candidate           ProjectCandidate? @relation(fields: [candidateId, projectId], references: [id, projectId], onDelete: Cascade)
 
-  @@unique([projectId, candidateId, projectType, year, quarter])
+  @@index([projectId, candidateId, projectType, year, quarter])
   @@index([projectId, year, quarter])
   @@index([projectId, candidateId, projectType])
   @@index([companyName, projectType])
@@ -134,6 +137,43 @@ model PerformanceQuarterArchive {
   @@unique([projectId, year, quarter])
   @@index([projectId, savedAt])
   @@index([savedAt])
+}
+
+model PerformanceWeightedSnapshot {
+  projectId       String                     @id
+  inputRevision   Int
+  startYear       Int
+  startQuarter    Int
+  endYear         Int
+  endQuarter      Int
+  weightingMethod String
+  savedAt         DateTime @db.Timestamptz(3)                   @default(now())
+  createdAt       DateTime @db.Timestamptz(3)                   @default(now())
+  updatedAt       DateTime @db.Timestamptz(3)                   @updatedAt
+  project         Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scores          PerformanceWeightedScore[]
+
+  @@index([inputRevision])
+  @@index([savedAt])
+}
+
+model PerformanceWeightedScore {
+  id                       String                      @id @default(cuid())
+  projectId                String
+  candidateId              String
+  projectType              ProjectType
+  classificationLevel      String
+  weightedAverage          Decimal? @db.Decimal(38, 20)
+  weightedAverageCanonical String?
+  quarterCount             Int
+  createdAt                DateTime @db.Timestamptz(3)                    @default(now())
+  updatedAt                DateTime @db.Timestamptz(3)                    @updatedAt
+  snapshot                 PerformanceWeightedSnapshot @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
+  candidate                ProjectCandidate            @relation(fields: [candidateId, projectId], references: [id, projectId], onDelete: Cascade)
+
+  @@unique([projectId, candidateId, projectType])
+  @@index([candidateId])
+  @@index([projectId, projectType])
 }
 
 model QingbiaoExclusionRule {

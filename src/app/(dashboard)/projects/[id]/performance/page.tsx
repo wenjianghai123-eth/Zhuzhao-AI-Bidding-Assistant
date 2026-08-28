@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 import { PerformanceManager } from "@/features/performance/components/performance-manager";
 import { parsePerformanceFilters } from "@/features/performance/performance-filter-schema";
 import { toPerformanceFormValues } from "@/features/performance/performance-form-schema";
+import { parsePerformanceWeightedRange } from "@/features/performance/performance-weighted-score-schema";
 import { getCompanyPerformancePageData } from "@/server/application/company-performance-service";
+import { getPerformanceWeightedPageData } from "@/server/application/performance-weighted-score-service";
 
 export default async function ProjectPerformancePage({
   params,
@@ -13,9 +15,14 @@ export default async function ProjectPerformancePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id: projectId } = await params;
-  const filters = parsePerformanceFilters(await searchParams);
-  const pageData = await getCompanyPerformancePageData(projectId, filters);
-  if (!pageData) {
+  const resolvedSearchParams = await searchParams;
+  const filters = parsePerformanceFilters(resolvedSearchParams);
+  const weightedRange = parsePerformanceWeightedRange(resolvedSearchParams);
+  const [pageData, weightedScoreData] = await Promise.all([
+    getCompanyPerformancePageData(projectId, filters),
+    getPerformanceWeightedPageData(projectId, weightedRange),
+  ]);
+  if (!pageData || !weightedScoreData) {
     notFound();
   }
 
@@ -28,6 +35,13 @@ export default async function ProjectPerformancePage({
         filters.projectType ?? "",
         filters.companyName ?? "",
         filters.keyword ?? "",
+        weightedScoreData.start.year,
+        weightedScoreData.start.quarter,
+        weightedScoreData.end.year,
+        weightedScoreData.end.quarter,
+        weightedScoreData.weightingMethod,
+        weightedScoreData.inputRevision,
+        weightedScoreData.snapshotStatus,
       ].join("|")}
       project={pageData.project}
       records={pageData.records.map((record) => ({
@@ -39,6 +53,7 @@ export default async function ProjectPerformancePage({
       filterOptions={pageData.filterOptions}
       totalRecordCount={pageData.totalRecordCount}
       quarterOverview={pageData.quarterOverview}
+      weightedScoreData={weightedScoreData}
     />
   );
 }

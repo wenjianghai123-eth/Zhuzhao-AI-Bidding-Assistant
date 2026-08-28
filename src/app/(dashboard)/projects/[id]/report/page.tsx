@@ -24,6 +24,7 @@ import { PrintReportButton } from "@/features/analysis/components/print-report-b
 import { formatDateTime, formatMoney } from "@/lib/formatters";
 import { formatK2, formatPercentageFraction } from "@/lib/presentation";
 import { PROJECT_TYPE_LABELS } from "@/lib/project-type-labels";
+import { PERFORMANCE_WEIGHTING_METHOD_LABELS } from "@/lib/performance-weighting-method-labels";
 import { getRuntimeAnalysisDeliveryData } from "@/server/application/analysis-delivery-runtime-service";
 
 function sourceLabel(source: QingbiaoSourceAnalysis) {
@@ -261,6 +262,12 @@ export default async function ReportPage({
             <div>
               <dt className="text-xs text-muted-foreground">候选单位数</dt>
               <dd className="mt-1 font-medium">{analysis.candidateCount}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">履约加权方式</dt>
+              <dd className="mt-1 font-medium">
+                {PERFORMANCE_WEIGHTING_METHOD_LABELS[data.performanceWeightingMethod]}
+              </dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">我方单位</dt>

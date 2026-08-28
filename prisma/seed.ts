@@ -207,23 +207,30 @@ async function main() {
     if (!candidateId) {
       throw new Error(`Missing seeded candidate: ${performance.companyName}`);
     }
-    await prisma.companyPerformance.upsert({
+    const existingPerformance = await prisma.companyPerformance.findFirst({
       where: {
-        projectId_candidateId_projectType_year_quarter: {
-          projectId,
-          candidateId,
-          projectType: performance.projectType,
-          year: performance.year,
-          quarter: performance.quarter,
-        },
+        projectId,
+        candidateId,
+        projectType: performance.projectType,
+        year: performance.year,
+        quarter: performance.quarter,
       },
-      update: {
-        companyName: performance.companyName,
-        classificationLevel: performance.classificationLevel,
-        score: performance.score,
-      },
-      create: { projectId, candidateId, ...performance },
+      select: { id: true },
     });
+    if (existingPerformance) {
+      await prisma.companyPerformance.update({
+        where: { id: existingPerformance.id },
+        data: {
+          companyName: performance.companyName,
+          classificationLevel: performance.classificationLevel,
+          score: performance.score,
+        },
+      });
+    } else {
+      await prisma.companyPerformance.create({
+        data: { projectId, candidateId, ...performance },
+      });
+    }
   }
 
   const seededProject = await prisma.project.findUniqueOrThrow({

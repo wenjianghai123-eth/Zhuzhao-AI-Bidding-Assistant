@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 
 import { prisma } from "@/server/db/prisma";
 import { prismaCompanyPerformanceRepository } from "@/server/repositories/company-performance-repository";
+import {
+  getPerformanceWeightedPageData,
+  savePerformanceWeightedScores,
+} from "@/server/application/performance-weighted-score-service";
 
 const projectAId = "e2e-performance-scope-project-a";
 const projectBId = "e2e-performance-scope-project-b";
@@ -74,6 +78,18 @@ async function createScopeProject(
       score: performanceScores[index] ?? "0",
     })),
   });
+  const weightedPage = await getPerformanceWeightedPageData(projectId);
+  if (!weightedPage) throw new Error("Weighted performance fixture is unavailable.");
+  const saved = await savePerformanceWeightedScores(projectId, {
+    expectedInputRevision: weightedPage.inputRevision,
+    start: weightedPage.start,
+    end: weightedPage.end,
+    weightingMethod: weightedPage.weightingMethod,
+    rows: weightedPage.suggestedRows,
+  });
+  if (saved.status !== "saved") {
+    throw new Error("Weighted performance fixture could not be saved.");
+  }
 }
 
 test.beforeEach(async () => {
@@ -195,4 +211,138 @@ test("同名公司的履约页面与清标结果按 Project 隔离", async ({ pa
   expect(projectAResult?.performanceScore.toString()).not.toBe(
     projectBResult?.performanceScore.toString(),
   );
+});
+
+test("单位履约加权分切换线性方法后页面、刷新与清标同源", async ({ page }) => {
+  await prisma.companyPerformance.updateMany({
+    where: { projectId: projectAId, candidateId: "scope-a-candidate-1" },
+    data: { score: "90" },
+  });
+  await prisma.companyPerformance.createMany({
+    data: [
+      {
+        projectId: projectAId,
+        candidateId: "scope-a-candidate-1",
+        companyName: "A公司",
+        projectType: "CURTAIN_WALL",
+        classificationLevel: "A级",
+        year: 2026,
+        quarter: 1,
+        score: "94",
+      },
+      {
+        projectId: projectAId,
+        candidateId: "scope-a-candidate-1",
+        companyName: "A公司",
+        projectType: "CURTAIN_WALL",
+        classificationLevel: "A级",
+        year: 2026,
+        quarter: 2,
+        score: "88",
+      },
+    ],
+  });
+  await prisma.project.update({
+    where: { id: projectAId },
+    data: { performanceInputRevision: { increment: 1 } },
+  });
+
+  await page.goto(`/projects/${projectAId}/performance`);
+  const weightedModule = page.getByTestId("performance-weighted-score");
+  await expect(weightedModule.getByText("已过期 · 请重新同步并保存", { exact: true })).toBeVisible();
+  await expect(weightedModule.getByText("已配置 6 行", { exact: false })).toBeVisible();
+  await expect(weightedModule.locator("tbody tr")).toHaveCount(6);
+  await weightedModule.getByRole("button", { name: "新增季度列" }).click();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("weightedEnd"))
+    .toBe("2026-Q2");
+  const headers = await weightedModule.getByRole("columnheader").allTextContents();
+  const q1Column = headers.indexOf("2026 Q1");
+  const q2Column = headers.indexOf("2026 Q2");
+  const averageColumn = headers.indexOf("加权平均分");
+  expect(q1Column).toBeGreaterThan(0);
+  expect(q2Column).toBeGreaterThan(q1Column);
+  const weightedRow = weightedModule
+    .locator("tbody tr")
+    .filter({ hasText: "A公司" })
+    .filter({ hasText: "幕墙" });
+  await expect(weightedRow.getByRole("cell").nth(q1Column)).toHaveText("92.00");
+  await expect(weightedRow.getByRole("cell").nth(q2Column)).toHaveText("88.00");
+  await expect(weightedRow.getByRole("cell").nth(averageColumn)).toHaveText("90.00");
+  await weightedModule.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(weightedModule.getByText("已保存 · 6 行", { exact: true })).toBeVisible();
+
+  const weightingMethod = weightedModule.getByRole("combobox", {
+    name: "加权方式",
+  });
+  await weightingMethod.click();
+  await page
+    .getByRole("option", { name: "时间线性加权（越近权重越高）", exact: true })
+    .click();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("weightedMethod"))
+    .toBe("LINEAR_RECENCY_RECENT_12");
+  await expect(weightedModule.getByText("已过期 · 请重新同步并保存", { exact: true })).toBeVisible();
+  await expect(weightedRow.getByRole("cell").nth(averageColumn)).toHaveText("89.33");
+  await weightedModule.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(weightedModule.getByText("已保存 · 6 行", { exact: true })).toBeVisible();
+  const [projectASnapshot, projectBSnapshot] = await Promise.all([
+    prisma.performanceWeightedSnapshot.findUniqueOrThrow({
+      where: { projectId: projectAId },
+      select: { weightingMethod: true },
+    }),
+    prisma.performanceWeightedSnapshot.findUniqueOrThrow({
+      where: { projectId: projectBId },
+      select: { weightingMethod: true },
+    }),
+  ]);
+  expect(projectASnapshot.weightingMethod).toBe("LINEAR_RECENCY_RECENT_12");
+  expect(projectBSnapshot.weightingMethod).toBe("EQUAL_RECENT_12");
+
+  await page.reload();
+  await expect(weightedModule.getByText("已保存 · 6 行", { exact: true })).toBeVisible();
+  await expect(weightingMethod).toContainText("时间线性加权（越近权重越高）");
+  await expect(weightedRow.getByRole("cell").nth(q1Column)).toHaveText("92.00");
+  await expect(weightedRow.getByRole("cell").nth(averageColumn)).toHaveText("89.33");
+
+  await page.goto(`/projects/${projectAId}/qingbiao`);
+  await expect(page.getByText("配置及履约数据完整，可以开始测算。")).toBeVisible();
+  await page.getByRole("button", { name: "开始清标测算" }).click();
+  await expect(page.getByRole("heading", { name: "16场景总览" })).toBeVisible();
+  const qingbiaoPerformance = await prisma.qingbiaoResult.findFirstOrThrow({
+    where: {
+      candidateId: "scope-a-candidate-1",
+      scenario: { projectId: projectAId },
+    },
+    select: {
+      performanceAverage: true,
+      performanceAverageCanonical: true,
+    },
+  });
+  expect(qingbiaoPerformance.performanceAverageCanonical).toBe(
+    "89.333333333333333333",
+  );
+  expect(qingbiaoPerformance.performanceAverage.toString()).toBe(
+    "89.33333333333333",
+  );
+
+  await page.goto(`/projects/${projectAId}/performance`);
+
+  const detailRow = page
+    .getByRole("row")
+    .filter({ hasText: "A公司" })
+    .filter({ hasText: "94.00" });
+  await detailRow
+    .getByRole("button", { name: "操作 A公司 2026年第一季度" })
+    .click();
+  await page.getByRole("menuitem", { name: "编辑" }).click();
+  const performanceDialog = page.getByRole("dialog", { name: "编辑履约记录" });
+  await performanceDialog.getByLabel("季度评分").fill("96");
+  await performanceDialog.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(performanceDialog).toBeHidden();
+  await expect(weightedModule.getByText("已过期 · 请重新同步并保存", { exact: true })).toBeVisible();
+  await expect(weightedRow.getByRole("cell").nth(q1Column)).toHaveText("93.00");
+  await expect(weightedRow.getByRole("cell").nth(averageColumn)).toHaveText("89.67");
+  await page.reload();
+  await expect(weightedRow.getByRole("cell").nth(q1Column)).toHaveText("93.00");
 });

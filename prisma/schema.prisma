@@ -21,44 +21,46 @@ enum ProjectType {
 }
 
 model Project {
-  id                     String                  @id @default(cuid())
-  name                   String
-  status                 ProjectStatus           @default(DRAFT)
-  qingbiaoInputRevision  Int                     @default(1)
-  dingbiaoInputRevision  Int                     @default(1)
-  createdAt              DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
-  rule                   ProjectRule?
-  candidates             ProjectCandidate[]
-  performanceRecords     CompanyPerformance[]
-  performanceArchives    PerformanceQuarterArchive[]
-  qingbiaoExclusionRules QingbiaoExclusionRule[]
-  qingbiaoScenarios      QingbiaoScenario[]
-  dingbiaoScenarios      DingbiaoScenario[]
+  id                          String                       @id @default(cuid())
+  name                        String
+  status                      ProjectStatus                @default(DRAFT)
+  performanceInputRevision    Int                          @default(1)
+  qingbiaoInputRevision       Int                          @default(1)
+  dingbiaoInputRevision       Int                          @default(1)
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  rule                        ProjectRule?
+  candidates                  ProjectCandidate[]
+  performanceRecords          CompanyPerformance[]
+  performanceArchives         PerformanceQuarterArchive[]
+  performanceWeightedSnapshot PerformanceWeightedSnapshot?
+  qingbiaoExclusionRules      QingbiaoExclusionRule[]
+  qingbiaoScenarios           QingbiaoScenario[]
+  dingbiaoScenarios           DingbiaoScenario[]
 
   @@index([status])
   @@index([createdAt])
 }
 
 model ProjectRule {
-  projectId                 String                   @id
-  maxBidPrice               Decimal
-  nonCompetitiveFee         Decimal
-  qingbiaoDrawValue1        Decimal                  @default(0)
-  qingbiaoDrawValue2        Decimal                  @default(0.01)
-  qingbiaoDrawValue3        Decimal                  @default(0.02)
-  qingbiaoDrawValue4        Decimal                  @default(0.03)
-  totalBidPriceScore        Decimal
-  similarExperienceScore   Decimal                  @default(0)
-  otherScore                Decimal                  @default(0)
-  rankDeduction             Decimal
-  finalDrawValue1           Decimal
-  finalDrawValue2           Decimal
-  finalDrawValue3           Decimal
-  createdAt                 DateTime                 @default(now())
-  updatedAt                 DateTime                 @updatedAt
-  project                   Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectTypes              ProjectRuleProjectType[]
+  projectId              String                   @id
+  maxBidPrice            Decimal
+  nonCompetitiveFee      Decimal
+  qingbiaoDrawValue1     Decimal                  @default(0)
+  qingbiaoDrawValue2     Decimal                  @default(0.01)
+  qingbiaoDrawValue3     Decimal                  @default(0.02)
+  qingbiaoDrawValue4     Decimal                  @default(0.03)
+  totalBidPriceScore     Decimal
+  similarExperienceScore Decimal                  @default(0)
+  otherScore             Decimal                  @default(0)
+  rankDeduction          Decimal
+  finalDrawValue1        Decimal
+  finalDrawValue2        Decimal
+  finalDrawValue3        Decimal
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+  project                Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectTypes           ProjectRuleProjectType[]
 }
 
 model ProjectRuleProjectType {
@@ -71,24 +73,25 @@ model ProjectRuleProjectType {
 }
 
 model ProjectCandidate {
-  id                     String                           @id @default(cuid())
-  projectId              String
-  companyName            String
-  bidPrice               Decimal
-  netDiscountRate        Decimal
-  trademarkScore         Decimal
-  technicalScore         Decimal
-  similarExperienceScore Decimal
-  otherScore             Decimal
-  isOurCompany           Boolean                          @default(false)
-  createdAt              DateTime                         @default(now())
-  updatedAt              DateTime                         @updatedAt
-  project                Project                          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  qingbiaoSelections     QingbiaoScenarioCandidate[]
-  qingbiaoExclusions     QingbiaoExclusionRuleCandidate[]
-  qingbiaoResults        QingbiaoResult[]
-  dingbiaoResults        DingbiaoResult[]
-  performanceRecords     CompanyPerformance[]
+  id                        String                           @id @default(cuid())
+  projectId                 String
+  companyName               String
+  bidPrice                  Decimal
+  netDiscountRate           Decimal
+  trademarkScore            Decimal
+  technicalScore            Decimal
+  similarExperienceScore    Decimal
+  otherScore                Decimal
+  isOurCompany              Boolean                          @default(false)
+  createdAt                 DateTime                         @default(now())
+  updatedAt                 DateTime                         @updatedAt
+  project                   Project                          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  qingbiaoSelections        QingbiaoScenarioCandidate[]
+  qingbiaoExclusions        QingbiaoExclusionRuleCandidate[]
+  qingbiaoResults           QingbiaoResult[]
+  dingbiaoResults           DingbiaoResult[]
+  performanceRecords        CompanyPerformance[]
+  performanceWeightedScores PerformanceWeightedScore[]
 
   @@unique([projectId, companyName])
   @@unique([id, projectId])
@@ -98,7 +101,7 @@ model ProjectCandidate {
 }
 
 model CompanyPerformance {
-  id                  String      @id @default(cuid())
+  id                  String            @id @default(cuid())
   projectId           String?
   candidateId         String?
   companyName         String
@@ -107,12 +110,12 @@ model CompanyPerformance {
   year                Int
   quarter             Int
   score               Decimal
-  createdAt           DateTime    @default(now())
-  updatedAt           DateTime    @updatedAt
-  project             Project?    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  project             Project?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   candidate           ProjectCandidate? @relation(fields: [candidateId, projectId], references: [id, projectId], onDelete: Cascade)
 
-  @@unique([projectId, candidateId, projectType, year, quarter])
+  @@index([projectId, candidateId, projectType, year, quarter])
   @@index([projectId, year, quarter])
   @@index([projectId, candidateId, projectType])
   @@index([companyName, projectType])
@@ -131,6 +134,43 @@ model PerformanceQuarterArchive {
   @@unique([projectId, year, quarter])
   @@index([projectId, savedAt])
   @@index([savedAt])
+}
+
+model PerformanceWeightedSnapshot {
+  projectId       String                     @id
+  inputRevision   Int
+  startYear       Int
+  startQuarter    Int
+  endYear         Int
+  endQuarter      Int
+  weightingMethod String
+  savedAt         DateTime                   @default(now())
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+  project         Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scores          PerformanceWeightedScore[]
+
+  @@index([inputRevision])
+  @@index([savedAt])
+}
+
+model PerformanceWeightedScore {
+  id                       String                      @id @default(cuid())
+  projectId                String
+  candidateId              String
+  projectType              ProjectType
+  classificationLevel      String
+  weightedAverage          Decimal?
+  weightedAverageCanonical String?
+  quarterCount             Int
+  createdAt                DateTime                    @default(now())
+  updatedAt                DateTime                    @updatedAt
+  snapshot                 PerformanceWeightedSnapshot @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
+  candidate                ProjectCandidate            @relation(fields: [candidateId, projectId], references: [id, projectId], onDelete: Cascade)
+
+  @@unique([projectId, candidateId, projectType])
+  @@index([candidateId])
+  @@index([projectId, projectType])
 }
 
 model QingbiaoExclusionRule {

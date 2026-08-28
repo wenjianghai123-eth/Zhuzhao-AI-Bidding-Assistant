@@ -105,8 +105,8 @@ try {
     affectedProject.id,
     input("CURTAIN_WALL", 2026, 1, "85"),
   );
-  if (duplicate.status !== "identity_conflict") {
-    throw new Error("Duplicate quarterly performance was not rejected.");
+  if (duplicate.status !== "created") {
+    throw new Error("Multiple quarterly performance details were not accepted.");
   }
 
   const initialAverage = await getRecentPerformanceAverage(
@@ -116,7 +116,7 @@ try {
   );
   if (
     initialAverage.status !== "complete" ||
-    initialAverage.averageScore !== "85"
+    initialAverage.averageScore !== "85.625"
   ) {
     throw new Error("Multi-project-type performance average is incorrect.");
   }
@@ -137,7 +137,7 @@ try {
   );
   if (
     updatedAverage.status !== "complete" ||
-    updatedAverage.averageScore !== "87.5"
+    updatedAverage.averageScore !== "86.875"
   ) {
     throw new Error("Updated performance average was not persisted.");
   }
@@ -174,8 +174,8 @@ try {
     },
   });
   if (
-    revision?.qingbiaoInputRevision !== 7 ||
-    revision.dingbiaoInputRevision !== 7
+    revision?.qingbiaoInputRevision !== 8 ||
+    revision.dingbiaoInputRevision !== 8
   ) {
     throw new Error(
       "Performance mutations did not invalidate the current project calculations.",
@@ -218,7 +218,7 @@ try {
         created: 4,
         updated: true,
         deleted: true,
-        duplicateRejected: true,
+        multipleDetailsAccepted: true,
         multiProjectTypeAverage: updatedAverage.averageScore,
         missingProjectTypes: partialMissing.missingProjectTypes,
         affectedInputRevision: revision.qingbiaoInputRevision,

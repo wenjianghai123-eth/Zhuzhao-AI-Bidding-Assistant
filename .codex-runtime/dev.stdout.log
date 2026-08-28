@@ -1,0 +1,41 @@
+▲ Next.js 16.3.1 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.114.168:3000
+- Environments: .env
+✓ Ready in 335ms
+✓ Running next.config.ts took 25ms
+Creating turbopack project {
+  dir: 'D:\\Users\\Administrator\\Desktop\\Banana 流程\\Github\\Zhuzhao AI Bidding Assistant',
+  testMode: true
+}
+
+ GET /api/health 200 in 482ms (next.js: 380ms, application-code: 102ms)
+ GET /projects/project-001/performance 200 in 853ms (next.js: 456ms, application-code: 397ms)
+ GET /projects/project-001/performance?weightedMethod=LINEAR_RECENCY_RECENT_12 200 in 47ms (next.js: 10ms, application-code: 37ms)
+ GET /projects/project-001/performance?weightedMethod=EQUAL_RECENT_12 200 in 43ms (next.js: 10ms, application-code: 33ms)
+ GET /projects/project-001/performance?weightedMethod=LINEAR_RECENCY_RECENT_12 200 in 48ms (next.js: 10ms, application-code: 38ms)
+ POST /projects/project-001/performance?weightedMethod=LINEAR_RECENCY_RECENT_12 200 in 675ms (next.js: 10ms, application-code: 665ms)
+  └─ ƒ savePerformanceWeightedScoresAction("project-001", {"end":{"quarter":2,"year":2026},"expectedInputRevision":1,"rows":["[Object]","[Object]","[Object]","... 8 items not stringified"],"...":"2 items not stringified"}) in 625ms src/app/(dashboard)/performance/actions.ts
+ GET /projects/project-001/performance?weightedMethod=LINEAR_RECENCY_RECENT_12 200 in 39ms (next.js: 7ms, application-code: 33ms)
+ GET /projects/project-001/performance?weightedMethod=EQUAL_RECENT_12 200 in 35ms (next.js: 9ms, application-code: 26ms)
+ POST /projects/project-001/performance?weightedMethod=EQUAL_RECENT_12 200 in 84ms (next.js: 6ms, application-code: 78ms)
+  └─ ƒ savePerformanceWeightedScoresAction("project-001", {"end":{"quarter":2,"year":2026},"expectedInputRevision":1,"rows":["[Object]","[Object]","[Object]","... 8 items not stringified"],"...":"2 items not stringified"}) in 41ms src/app/(dashboard)/performance/actions.ts
+ GET /projects/project-001/performance?weightedMethod=EQUAL_RECENT_12 200 in 44ms (next.js: 2ms, application-code: 41ms)
+ GET /projects/project-001/performance?weightedMethod=LINEAR_RECENCY_RECENT_12 200 in 49ms (next.js: 11ms, application-code: 38ms)
+ GET /projects/project-001/performance?weightedMethod=EQUAL_RECENT_12 200 in 42ms (next.js: 9ms, application-code: 33ms)
+ GET /projects/project-001/performance?weightedMethod=EQUAL_RECENT_12 200 in 165ms (next.js: 6ms, application-code: 159ms)
+ GET /projects/project-001/qingbiao 200 in 441ms (next.js: 371ms, application-code: 69ms)
+ POST /projects/project-001/qingbiao 200 in 922ms (next.js: 7ms, application-code: 915ms)
+  └─ ƒ calculateQingbiaoAction("project-001") in 848ms src/app/(dashboard)/projects/[id]/qingbiao/actions.ts
+ GET /projects/project-001/qingbiao 200 in 67ms (next.js: 7ms, application-code: 60ms)
+ GET / 307 in 52ms (next.js: 18ms, application-code: 34ms)
+ GET /projects 200 in 157ms (next.js: 84ms, application-code: 74ms)
+ GET /projects/new 200 in 28ms (next.js: 17ms, application-code: 11ms)
+ GET /projects 200 in 13ms (next.js: 1.8ms, application-code: 11ms)
+ GET /projects/project-001 200 in 376ms (next.js: 352ms, application-code: 23ms)
+ GET /projects/project-001/candidates 200 in 377ms (next.js: 358ms, application-code: 19ms)
+ GET /projects/project-001/performance 200 in 33ms (next.js: 7ms, application-code: 26ms)
+ GET /projects/project-001/performance?year=2026&quarter=2 200 in 38ms (next.js: 7ms, application-code: 31ms)
+ GET /projects/project-001/qingbiao 200 in 65ms (next.js: 7ms, application-code: 58ms)
+ GET /projects/project-001/performance?company=%E4%B8%8A%E6%B5%B7%E5%BB%BA%E5%B7%A5%E8%A3%85%E9%A5%B0%E9%9B%86%E5%9B%A2%E6%9C%89%E9%99%90%E5%85%AC%E5%8F%B8 200 in 145ms (next.js: 9ms, application-code: 136ms)
+[ELIFECYCLE] Command failed with exit code 1073807364.

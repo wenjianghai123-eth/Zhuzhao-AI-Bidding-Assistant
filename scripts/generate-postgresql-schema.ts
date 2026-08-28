@@ -33,6 +33,7 @@ const ratioAndScoreFields = new Set([
   "ProjectCandidate.similarExperienceScore",
   "ProjectCandidate.otherScore",
   "CompanyPerformance.score",
+  "PerformanceWeightedScore.weightedAverage",
   "QingbiaoScenario.qingbiaoK1",
   "QingbiaoResult.performanceAverage",
   "QingbiaoResult.performanceScore",

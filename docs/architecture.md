@@ -152,6 +152,7 @@ Client form → Server Action / Route Handler → Zod validation
             → 结果 DTO → 页面展示与刷新恢复
 ```
 
+- `performanceInputRevision` 标识影响单位履约加权分快照的输入版本。
 - `qingbiaoInputRevision` 标识影响清标的输入版本。
 - `dingbiaoInputRevision` 标识影响定标的输入版本。
 - 场景保存 `inputRevision` 与 `ruleVersion`；不匹配当前输入时不作为有效下游数据。
@@ -288,7 +289,7 @@ ranking candidate set = ALL_CANDIDATES
 
 场景以 `(exclusionRuleId, qingbiaoK2)` upsert。重算先按具体 `scenarioId` 删除旧 `QingbiaoResult`，再写入该场景完整结果，既不会产生第 17 个场景，也不会触及其他项目。`getQingbiaoScenarioCatalog(projectId)` 返回 16 项带 `scenarioId` 和每项 `finalRank` 的 Top5，作为 Step 6 定标来源选择的正式接口。
 
-页面用 `QingbiaoScenario.inputRevision` 与 `Project.qingbiaoInputRevision` 区分“尚未计算 / 当前有效 / 已过期”。规则、项目参数、候选单位和项目履约写入都只递增当前 Project 的清标/定标输入修订号。清标履约读取显式使用 `projectId + candidateId + projectType`，最近 12 季度公式保持不变，不存在同名公司跨项目混入。
+页面用 `QingbiaoScenario.inputRevision` 与 `Project.qingbiaoInputRevision` 区分“尚未计算 / 当前有效 / 已过期”。履约明细、候选范围或项目类型变化先递增当前项目的 `performanceInputRevision`，使 `PerformanceWeightedSnapshot` 过期；保存新的加权分快照再递增清标/定标 revision。清标只读取与当前 performance revision 一致的项目级正式快照，并显式使用 `projectId + candidateId + projectType`，不存在同名公司跨项目混入。最近 12 季度公式仍位于 Domain，详见 `docs/performance-weighted-score.md`。
 
 新版清标、定标和 analysis 已不再假设项目只有 4 个 K2 场景。底层 `isLegacy` 标记仅用于保留历史兼容数据；当前定标目录和全场景 analysis 都按明确的 `sourceQingbiaoScenarioId`、规则版本与输入修订读取，不按 `ruleIndex=1` 或 `isLegacy=true` 筛选，也不赋予规则 1 特殊业务含义。
 

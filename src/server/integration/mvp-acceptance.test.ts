@@ -192,6 +192,7 @@ describe("MVP empty-database acceptance flow", () => {
       qingbiaoRuntime,
       dingbiaoRuntime,
       analysisRuntime,
+      performanceWeighted,
       previewRoute,
       confirmRoute,
     ] = await Promise.all([
@@ -203,6 +204,7 @@ describe("MVP empty-database acceptance flow", () => {
       import("@/server/application/qingbiao-runtime-service"),
       import("@/server/application/dingbiao-runtime-service"),
       import("@/server/application/analysis-runtime-service"),
+      import("@/server/application/performance-weighted-score-service"),
       import("@/app/api/imports/excel/preview/route"),
       import("@/app/api/imports/excel/confirm/route"),
     ]);
@@ -330,10 +332,25 @@ describe("MVP empty-database acceptance flow", () => {
         projectId,
         performanceFormData(ourCandidateId, candidateFixtures[0]),
       );
-    expect(duplicatePerformanceResult.status).toBe("conflict");
+    expect(duplicatePerformanceResult.status).toBe("success");
     expect(
       await prisma.companyPerformance.count({ where: { projectId } }),
-    ).toBe(6);
+    ).toBe(7);
+
+    const weightedPage =
+      await performanceWeighted.getPerformanceWeightedPageData(projectId);
+    if (!weightedPage) {
+      throw new Error("Weighted performance page should exist.");
+    }
+    const weightedResult =
+      await performanceActions.savePerformanceWeightedScoresAction(projectId, {
+        expectedInputRevision: weightedPage.inputRevision,
+        start: weightedPage.start,
+        end: weightedPage.end,
+        weightingMethod: weightedPage.weightingMethod,
+        rows: weightedPage.suggestedRows,
+      });
+    expect(weightedResult.status).toBe("success");
 
     const qingbiaoBeforeCalculation =
       await qingbiaoRuntime.getRuntimeQingbiaoPageData(projectId);
@@ -531,7 +548,7 @@ describe("MVP empty-database acceptance flow", () => {
           where: { scenario: { projectId } },
         }),
       ]);
-      expect(persistedCounts).toEqual([1, 6, 6, 16, 96, 9, 36]);
+      expect(persistedCounts).toEqual([1, 6, 7, 16, 96, 9, 36]);
     } finally {
       await freshPrisma.$disconnect();
     }

@@ -146,6 +146,7 @@ export function createPrismaProjectCandidateRepository(
       await transaction.project.update({
         where: { id: projectId },
         data: {
+          performanceInputRevision: { increment: 1 },
           qingbiaoInputRevision: { increment: 1 },
           dingbiaoInputRevision: { increment: 1 },
         },
@@ -180,6 +181,7 @@ export function createPrismaProjectCandidateRepository(
       await transaction.project.update({
         where: { id: projectId },
         data: {
+          performanceInputRevision: { increment: 1 },
           qingbiaoInputRevision: { increment: 1 },
           dingbiaoInputRevision: { increment: 1 },
         },
@@ -241,6 +243,7 @@ export function createPrismaProjectCandidateRepository(
       await transaction.project.update({
         where: { id: projectId },
         data: {
+          performanceInputRevision: { increment: 1 },
           qingbiaoInputRevision: { increment: 1 },
           dingbiaoInputRevision: { increment: 1 },
         },

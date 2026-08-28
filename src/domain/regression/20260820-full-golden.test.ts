@@ -34,6 +34,8 @@ type AnalysisRuntimeModule =
   typeof import("@/server/application/analysis-runtime-service");
 type AnalysisDeliveryRuntimeModule =
   typeof import("@/server/application/analysis-delivery-runtime-service");
+type PerformanceWeightedModule =
+  typeof import("@/server/application/performance-weighted-score-service");
 
 const repositoryRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -47,6 +49,7 @@ let qingbiaoRuntime: QingbiaoRuntimeModule | undefined;
 let dingbiaoRuntime: DingbiaoRuntimeModule | undefined;
 let analysisRuntime: AnalysisRuntimeModule | undefined;
 let analysisDeliveryRuntime: AnalysisDeliveryRuntimeModule | undefined;
+let performanceWeighted: PerformanceWeightedModule | undefined;
 let usesExternalPostgresql = false;
 
 function applyMigrations(databasePath: string) {
@@ -86,7 +89,8 @@ function requireRuntimeModules() {
     !qingbiaoRuntime ||
     !dingbiaoRuntime ||
     !analysisRuntime ||
-    !analysisDeliveryRuntime
+    !analysisDeliveryRuntime ||
+    !performanceWeighted
   ) {
     throw new Error("Golden Case runtime services were not initialized.");
   }
@@ -95,6 +99,7 @@ function requireRuntimeModules() {
     dingbiaoRuntime,
     analysisRuntime,
     analysisDeliveryRuntime,
+    performanceWeighted,
   };
 }
 
@@ -148,6 +153,7 @@ beforeAll(async () => {
     dingbiaoModule,
     analysisModule,
     analysisDeliveryModule,
+    performanceWeightedModule,
   ] =
     await Promise.all([
       import("@/server/db/prisma"),
@@ -155,12 +161,14 @@ beforeAll(async () => {
       import("@/server/application/dingbiao-runtime-service"),
       import("@/server/application/analysis-runtime-service"),
       import("@/server/application/analysis-delivery-runtime-service"),
+      import("@/server/application/performance-weighted-score-service"),
     ]);
   prisma = databaseModule.prisma;
   qingbiaoRuntime = qingbiaoModule;
   dingbiaoRuntime = dingbiaoModule;
   analysisRuntime = analysisModule;
   analysisDeliveryRuntime = analysisDeliveryModule;
+  performanceWeighted = performanceWeightedModule;
   if (usesExternalPostgresql) {
     await cleanGoldenData(databaseModule.prisma);
   }
@@ -243,6 +251,24 @@ describe("Golden Case 20260820-A full business flow", () => {
         }),
       ),
     });
+
+    const weightedPage = await runtime.performanceWeighted.getPerformanceWeightedPageData(
+      golden.project.id,
+    );
+    if (!weightedPage) {
+      throw new Error("Golden Case weighted performance page was unavailable.");
+    }
+    const weightedSave = await runtime.performanceWeighted.savePerformanceWeightedScores(
+      golden.project.id,
+      {
+        expectedInputRevision: weightedPage.inputRevision,
+        start: weightedPage.start,
+        end: weightedPage.end,
+        weightingMethod: weightedPage.weightingMethod,
+        rows: weightedPage.suggestedRows,
+      },
+    );
+    expectAt("单位履约加权分快照保存状态", weightedSave.status, "saved");
 
     const initialQingbiaoPage =
       await runtime.qingbiaoRuntime.getRuntimeQingbiaoPageData(

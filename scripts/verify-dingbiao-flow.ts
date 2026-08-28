@@ -11,6 +11,7 @@ import {
 } from "../src/server/application/qingbiao-runtime-service";
 import { assertSafeDestructiveDatabaseTarget } from "../src/server/db/database-target-safety";
 import { prisma } from "../src/server/db/prisma";
+import { saveSynchronizedPerformanceWeightedScores } from "../src/server/application/performance-weighted-score-service";
 
 assertSafeDestructiveDatabaseTarget(process.env.DATABASE_URL, "Dingbiao verification");
 
@@ -74,6 +75,10 @@ try {
       score: candidate.score,
     })),
   });
+  const weighted = await saveSynchronizedPerformanceWeightedScores(projectId);
+  if (weighted.status !== "saved") {
+    throw new Error(`Weighted performance save failed: ${weighted.status}`);
+  }
 
   const qingbiaoPage = await getRuntimeQingbiaoPageData(projectId);
   if (!qingbiaoPage || qingbiaoPage.exclusionRules.length !== 4) {

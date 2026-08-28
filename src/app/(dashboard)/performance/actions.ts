@@ -14,11 +14,16 @@ import {
   type PerformanceQuarterArchiveActionResult,
 } from "@/features/performance/performance-quarter-archive-schema";
 import {
+  performanceWeightedSaveSchema,
+  type PerformanceWeightedSaveActionResult,
+} from "@/features/performance/performance-weighted-score-schema";
+import {
   createCompanyPerformance,
   deleteCompanyPerformance,
   savePerformanceQuarterArchive,
   updateCompanyPerformance,
 } from "@/server/application/company-performance-service";
+import { savePerformanceWeightedScores } from "@/server/application/performance-weighted-score-service";
 
 function validatePerformanceForm(formData: FormData) {
   return performanceFormSchema.safeParse(readPerformanceFormData(formData));
@@ -46,12 +51,6 @@ export async function createPerformanceAction(
       projectId,
       toCompanyPerformanceInput(validation.data),
     );
-    if (result.status === "identity_conflict") {
-      return {
-        status: "conflict",
-        message: "该单位在同一项目类型、年份和季度下已有履约记录",
-      };
-    }
     if (result.status === "project_not_found") {
       return { status: "not_found", message: "当前工程项目不存在" };
     }
@@ -111,12 +110,6 @@ export async function updatePerformanceAction(
     );
     if (result.status === "not_found") {
       return { status: "not_found", message: "履约记录不存在" };
-    }
-    if (result.status === "identity_conflict") {
-      return {
-        status: "conflict",
-        message: "该单位在同一项目类型、年份和季度下已有履约记录",
-      };
     }
     if (result.status === "invalid_candidate") {
       return {
@@ -195,5 +188,53 @@ export async function savePerformanceQuarterArchiveAction(
     return { status: "success", message: "本季度履约评分已正式归档" };
   } catch {
     return { status: "failure", message: "保存本季度评分失败，请稍后重试" };
+  }
+}
+
+export async function savePerformanceWeightedScoresAction(
+  projectId: string,
+  input: unknown,
+): Promise<PerformanceWeightedSaveActionResult> {
+  if (projectId.trim().length === 0) {
+    return { status: "not_found", message: "未找到当前工程项目" };
+  }
+  const validation = performanceWeightedSaveSchema.safeParse(input);
+  if (!validation.success) {
+    return { status: "invalid", message: "请检查单位履约加权分设置" };
+  }
+
+  try {
+    const result = await savePerformanceWeightedScores(projectId, validation.data);
+    if (result.status === "project_not_found") {
+      return { status: "not_found", message: "当前工程项目不存在" };
+    }
+    if (result.status === "revision_conflict") {
+      return {
+        status: "conflict",
+        message: "履约明细已发生变化，请刷新后重新核对并保存",
+      };
+    }
+    if (result.status === "invalid_scope") {
+      return {
+        status: "invalid",
+        message: "单位、项目类型或季度范围不属于当前项目",
+      };
+    }
+    if (result.status === "unchanged") {
+      return { status: "invalid", message: "单位履约加权分没有变化" };
+    }
+
+    revalidatePath(`/projects/${projectId}/performance`);
+    revalidatePath(`/projects/${projectId}/qingbiao`);
+    revalidatePath(`/projects/${projectId}/dingbiao`);
+    revalidatePath(`/projects/${projectId}/analysis`);
+    revalidatePath(`/projects/${projectId}/reports`);
+    return {
+      status: "success",
+      savedAt: result.savedAt,
+      message: "单位履约加权分已保存",
+    };
+  } catch {
+    return { status: "failure", message: "保存单位履约加权分失败，请稍后重试" };
   }
 }

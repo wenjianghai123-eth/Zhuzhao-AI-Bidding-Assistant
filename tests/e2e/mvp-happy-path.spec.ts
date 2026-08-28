@@ -747,6 +747,12 @@ test("真实用户可从新建项目完成清标、定标和全场景分析", as
     }),
   ).toBeVisible();
 
+  const weightedModule = page.getByTestId("performance-weighted-score");
+  await weightedModule.getByRole("button", { name: "从履约明细同步" }).click();
+  await expect(weightedModule.getByText("已配置 6 行", { exact: false })).toBeVisible();
+  await weightedModule.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(weightedModule.getByText("已保存 · 6 行", { exact: true })).toBeVisible();
+
   await page.goto(`/projects/${projectId}/qingbiao`);
   const exclusions = [
     [candidateInputs[5].companyName],
@@ -815,13 +821,25 @@ test("真实用户可从新建项目完成清标、定标和全场景分析", as
   }
 
   await page.goto(`/projects/${projectId}/settings`);
+  await expect(decorationType).toBeDisabled();
+  await page.getByRole("button", { name: "修改项目类型" }).click();
+  let projectTypeDialog = page.getByRole("dialog", { name: "修改项目类型" });
+  await expect(projectTypeDialog).toContainText("已有测算结果将被标记为已过期");
+  await projectTypeDialog.getByRole("button", { name: "继续修改" }).click();
   await decorationType.check();
-  await page.getByRole("button", { name: "保存参数" }).click();
+  await page.getByRole("button", { name: "保存修改" }).click();
   await page.goto(`/projects/${projectId}/qingbiao`);
   await expect(page.getByText(/结果已过期，请重新进行清标测算/)).toBeVisible();
   await page.goto(`/projects/${projectId}/settings`);
+  await page.getByRole("button", { name: "修改项目类型" }).click();
+  projectTypeDialog = page.getByRole("dialog", { name: "修改项目类型" });
+  await projectTypeDialog.getByRole("button", { name: "继续修改" }).click();
   await decorationType.uncheck();
-  await page.getByRole("button", { name: "保存参数" }).click();
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await page.goto(`/projects/${projectId}/performance`);
+  await expect(weightedModule.getByText("已过期 · 请重新同步并保存", { exact: true })).toBeVisible();
+  await weightedModule.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(weightedModule.getByText("已保存 · 6 行", { exact: true })).toBeVisible();
   await page.goto(`/projects/${projectId}/qingbiao`);
   await expect(page.getByText(/结果已过期，请重新进行清标测算/)).toBeVisible();
   await page.getByRole("button", { name: "开始清标测算" }).click();

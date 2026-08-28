@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 
 import type { AnalysisDeliveryData } from "@/server/application/analysis-delivery-service";
 import { PROJECT_TYPE_LABELS } from "@/lib/project-type-labels";
+import { PERFORMANCE_WEIGHTING_METHOD_LABELS } from "@/lib/performance-weighting-method-labels";
 import {
   formatDateTime,
 } from "@/lib/formatters";
@@ -114,6 +115,7 @@ function addProjectOverview(workbook: ExcelJS.Workbook, data: AnalysisDeliveryDa
     ["最高投标限价（万元）", toPresentationNumber(data.project.rules.maxBidPrice, "money"), "money"],
     ["不可竞争费（万元）", toPresentationNumber(data.project.rules.nonCompetitiveFee, "money"), "money"],
     ["项目类型", data.project.projectTypes.map((type) => PROJECT_TYPE_LABELS[type]).join("、"), null],
+    ["履约加权方式", PERFORMANCE_WEIGHTING_METHOD_LABELS[data.performanceWeightingMethod], null],
     ["报价总分", toPresentationNumber(data.project.rules.totalBidPriceScore, "score"), "score"],
     ["排名递减扣分", toPresentationNumber(data.project.rules.rankDeduction, "score"), "score"],
     ["定标抽值1", toExcelFractionNumber(data.dingbiaoProject.finalDrawValueFractions[0]), "percentage"],
@@ -175,6 +177,7 @@ function addPerformance(workbook: ExcelJS.Workbook, data: AnalysisDeliveryData) 
     "季度",
     "季度履约分",
     "最近12季度平均值（系统清标结果）",
+    "加权方式",
   ]);
   data.performanceRecords.forEach((record) =>
     addDataRow(
@@ -185,8 +188,9 @@ function addPerformance(workbook: ExcelJS.Workbook, data: AnalysisDeliveryData) 
         `${record.year}Q${record.quarter}`,
         toPresentationNumber(record.score, "score"),
         toPresentationNumber(record.recent12Average, "score"),
+        PERFORMANCE_WEIGHTING_METHOD_LABELS[data.performanceWeightingMethod],
       ],
-      [null, null, null, "score", "score"],
+      [null, null, null, "score", "score", null],
     ),
   );
   finishSheet(worksheet);

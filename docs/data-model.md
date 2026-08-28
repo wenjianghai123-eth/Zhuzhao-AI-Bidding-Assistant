@@ -263,8 +263,10 @@ sourceQingbiaoScenarioId + finalistCount + finalDrawIndex
 | 模型 | 约束 | 目的 |
 | --- | --- | --- |
 | `ProjectCandidate` | `(id, projectId)` | 为履约记录提供同项目复合外键目标 |
-| `CompanyPerformance` | `(projectId, candidateId, projectType, year, quarter)` | 同项目同单位同专业同季度唯一；不同项目同名公司互不冲突 |
+| `CompanyPerformance` | `(projectId, candidateId, projectType, year, quarter)` 普通索引 | 同项目同单位同专业同季度允许多条履约明细，季度平均在 Domain 聚合；不同项目同名公司互不混用 |
 | `PerformanceQuarterArchive` | `(projectId, year, quarter)` | 项目内季度归档唯一 |
+| `PerformanceWeightedSnapshot` | `projectId` 主键 + `inputRevision` | 每项目一份正式加权分配置/版本快照，revision 不一致即 stale |
+| `PerformanceWeightedScore` | `(projectId, candidateId, projectType)` | 快照内同单位同专业一行；保存加权平均和参与季度数 |
 | `QingbiaoExclusionRule` | `(projectId, ruleIndex)` | 项目内四个槽位唯一 |
 | `QingbiaoExclusionRuleCandidate` | `(exclusionRuleId, candidateId)` | 同一规则不重复剔除 |
 | `QingbiaoScenario` | `(exclusionRuleId, k2Value)` | 16 场景身份 |

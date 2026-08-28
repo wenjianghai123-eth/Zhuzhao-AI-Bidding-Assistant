@@ -18,6 +18,7 @@ async function incrementProjectRevisions(
   await client.project.updateMany({
     where: { id: projectId },
     data: {
+      performanceInputRevision: { increment: 1 },
       qingbiaoInputRevision: { increment: 1 },
       dingbiaoInputRevision: { increment: 1 },
     },
@@ -34,14 +35,6 @@ export interface CompanyPerformanceRepository {
     projectId: string,
     recordId: string,
   ): Promise<CompanyPerformanceSnapshot | null>;
-  identityExists(
-    projectId: string,
-    input: Pick<
-      CompanyPerformanceInput,
-      "candidateId" | "projectType" | "year" | "quarter"
-    >,
-    excludeRecordId?: string,
-  ): Promise<boolean>;
   create(projectId: string, input: CompanyPerformanceInput): Promise<string | null>;
   update(
     projectId: string,
@@ -174,23 +167,6 @@ export const prismaCompanyPerformanceRepository: CompanyPerformanceRepository = 
       include: { candidate: { select: { companyName: true } } },
     });
     return record ? toSnapshot(record) : null;
-  },
-
-  async identityExists(projectId, input, excludeRecordId) {
-    const record = await prisma.companyPerformance.findFirst({
-      where: {
-        projectId,
-        candidateId: input.candidateId,
-        projectType: input.projectType,
-        year: input.year,
-        quarter: input.quarter,
-        ...(excludeRecordId === undefined
-          ? {}
-          : { id: { not: excludeRecordId } }),
-      },
-      select: { id: true },
-    });
-    return record !== null;
   },
 
   async create(projectId, input) {

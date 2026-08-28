@@ -13,7 +13,11 @@ export interface ProjectSettingsRepository {
     projectId: string,
   ): Promise<ProjectTypeDependencyState | null>;
   create(input: ProjectSettingsInput): Promise<string>;
-  update(projectId: string, input: ProjectSettingsInput): Promise<void>;
+  update(
+    projectId: string,
+    input: ProjectSettingsInput,
+    projectTypesChanged: boolean,
+  ): Promise<void>;
   updateProjectTypes(
     projectId: string,
     projectTypes: readonly ProjectTypeValue[],
@@ -130,12 +134,15 @@ export const prismaProjectSettingsRepository: ProjectSettingsRepository = {
     return project.id;
   },
 
-  async update(projectId, input) {
+  async update(projectId, input, projectTypesChanged) {
     await prisma.$transaction(async (transaction) => {
       await transaction.project.update({
         where: { id: projectId },
         data: {
           name: input.name,
+          ...(projectTypesChanged
+            ? { performanceInputRevision: { increment: 1 } }
+            : {}),
           qingbiaoInputRevision: { increment: 1 },
           dingbiaoInputRevision: { increment: 1 },
         },
@@ -178,6 +185,7 @@ export const prismaProjectSettingsRepository: ProjectSettingsRepository = {
       await transaction.project.update({
         where: { id: projectId },
         data: {
+          performanceInputRevision: { increment: 1 },
           qingbiaoInputRevision: { increment: 1 },
           dingbiaoInputRevision: { increment: 1 },
         },

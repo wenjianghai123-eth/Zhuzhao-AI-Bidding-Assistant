@@ -67,7 +67,6 @@ function createRepository(): CompanyPerformanceRepository {
       records.find(
         (record) => record.projectId === projectId && record.id === recordId,
       ) ?? null,
-    identityExists: async () => false,
     create: vi.fn(async () => "created-record"),
     update: vi.fn(async () => true),
     delete: vi.fn(async () => false),

@@ -1,4 +1,8 @@
 import type { DecisionAnalysis } from "@/domain/analysis";
+import {
+  normalizePerformanceWeightingMethod,
+  type PerformanceWeightingMethod,
+} from "@/domain/performance/performance-weighted-score";
 import type { ProjectTypeValue } from "@/domain/projects/project-settings";
 import type { AnalysisPageData } from "@/server/application/analysis-service";
 import type { CompanyPerformanceRepository } from "@/server/repositories/company-performance-repository";
@@ -12,6 +16,7 @@ import type {
   QingbiaoRepository,
   SavedQingbiaoCalculationSnapshot,
 } from "@/server/repositories/qingbiao-repository";
+import type { PerformanceWeightedScoreRepository } from "@/server/repositories/performance-weighted-score-repository";
 
 export interface AnalysisDeliveryPerformanceRecord {
   candidateId: string;
@@ -37,6 +42,7 @@ export interface AnalysisDeliveryData {
   qingbiao: SavedQingbiaoCalculationSnapshot;
   dingbiaoSources: readonly AnalysisDeliveryDingbiaoSource[];
   performanceRecords: readonly AnalysisDeliveryPerformanceRecord[];
+  performanceWeightingMethod: PerformanceWeightingMethod;
   analysis: DecisionAnalysis;
   qingbiaoState: "current";
   dingbiaoState: "current";
@@ -63,6 +69,7 @@ export interface AnalysisDeliveryDependencies {
   qingbiaoRepository: QingbiaoRepository;
   dingbiaoRepository: DingbiaoRepository;
   performanceRepository: CompanyPerformanceRepository;
+  performanceWeightedRepository: PerformanceWeightedScoreRepository;
   now(): Date;
 }
 
@@ -122,11 +129,12 @@ export async function getAnalysisDeliveryData(
   projectId: string,
   dependencies: AnalysisDeliveryDependencies,
 ): Promise<GetAnalysisDeliveryResult> {
-  const [pageData, project, dingbiaoProject, qingbiao] = await Promise.all([
+  const [pageData, project, dingbiaoProject, qingbiao, performanceSource] = await Promise.all([
     dependencies.analysisPageReader(projectId),
     dependencies.qingbiaoRepository.findProject(projectId),
     dependencies.dingbiaoRepository.findProject(projectId),
     dependencies.qingbiaoRepository.findSavedCalculation(projectId),
+    dependencies.performanceWeightedRepository.findSource(projectId),
   ]);
   if (!pageData) {
     return { status: "project_not_found" };
@@ -162,6 +170,24 @@ export async function getAnalysisDeliveryData(
       pageData,
       "snapshot_mismatch",
       "读取结果时项目数据发生变化，请刷新页面后重试。",
+    );
+  }
+  const performanceWeightingMethod = performanceSource?.savedSnapshot
+    ? normalizePerformanceWeightingMethod(
+        performanceSource.savedSnapshot.weightingMethod,
+      )
+    : null;
+  if (
+    !performanceSource ||
+    !performanceSource.savedSnapshot ||
+    performanceSource.savedSnapshot.inputRevision !==
+      performanceSource.project.inputRevision ||
+    !performanceWeightingMethod
+  ) {
+    return unavailable(
+      pageData,
+      "snapshot_mismatch",
+      "履约加权分快照已过期，请重新保存履约加权分并完成测算后再导出。",
     );
   }
 
@@ -214,6 +240,7 @@ export async function getAnalysisDeliveryData(
       qingbiao,
       dingbiaoSources,
       performanceRecords,
+      performanceWeightingMethod,
       analysis: pageData.analysisResult.analysis,
       qingbiaoState: "current",
       dingbiaoState: "current",

@@ -1,5 +1,5 @@
 import { calculateQingbiaoScenarioV2 } from "@/domain/qingbiao";
-import { getRecentPerformanceAverage } from "@/server/application/company-performance-service";
+import { getSavedPerformanceAverage } from "@/server/application/performance-weighted-score-service";
 import {
   ensureQingbiaoExclusionRules,
   saveQingbiaoExclusionRule,
@@ -17,8 +17,8 @@ const runtimeDependencies = {
   performanceAverageReader: async (
     projectId: string,
     candidateId: string,
-    projectTypes: Parameters<typeof getRecentPerformanceAverage>[2],
-  ) => getRecentPerformanceAverage(projectId, candidateId, projectTypes),
+    projectTypes: Parameters<typeof getSavedPerformanceAverage>[2],
+  ) => getSavedPerformanceAverage(projectId, candidateId, projectTypes),
   scenarioCalculator: calculateQingbiaoScenarioV2,
 };
 

@@ -99,7 +99,6 @@ function validateInputScope(
 
 export type CreateCompanyPerformanceResult =
   | { status: "created"; recordId: string }
-  | { status: "identity_conflict" }
   | PerformanceScopeFailure;
 
 export async function createCompanyPerformance(
@@ -115,10 +114,6 @@ export async function createCompanyPerformance(
   if (scopeFailure) {
     return scopeFailure;
   }
-  if (await repository.identityExists(projectId, input)) {
-    return { status: "identity_conflict" };
-  }
-
   const recordId = await repository.create(projectId, input);
   return recordId
     ? { status: "created", recordId }
@@ -143,7 +138,6 @@ export type UpdateCompanyPerformanceResult =
   | { status: "updated" }
   | { status: "unchanged" }
   | { status: "not_found" }
-  | { status: "identity_conflict" }
   | Exclude<PerformanceScopeFailure, { status: "project_not_found" }>;
 
 export async function updateCompanyPerformance(
@@ -164,9 +158,6 @@ export async function updateCompanyPerformance(
     return scopeFailure.status === "project_not_found"
       ? { status: "not_found" }
       : scopeFailure;
-  }
-  if (await repository.identityExists(projectId, input, recordId)) {
-    return { status: "identity_conflict" };
   }
   if (performanceRecordsAreEqual(current, input)) {
     return { status: "unchanged" };

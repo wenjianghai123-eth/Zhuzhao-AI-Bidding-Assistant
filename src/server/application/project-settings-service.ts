@@ -60,7 +60,11 @@ export async function updateProjectSettings(
     return { status: "unchanged" };
   }
 
-  if (!projectTypesAreEqual(current.projectTypes, input.projectTypes)) {
+  const projectTypesChanged = !projectTypesAreEqual(
+    current.projectTypes,
+    input.projectTypes,
+  );
+  if (projectTypesChanged) {
     const editState = await getProjectTypeEditState(projectId, repository);
     if (!editState) {
       return { status: "not_found" };
@@ -70,7 +74,7 @@ export async function updateProjectSettings(
     }
   }
 
-  await repository.update(projectId, input);
+  await repository.update(projectId, input, projectTypesChanged);
   return { status: "updated" };
 }
 

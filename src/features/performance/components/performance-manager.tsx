@@ -71,8 +71,10 @@ import {
 } from "@/features/performance/performance-form-schema";
 import { PerformanceDialog } from "@/features/performance/components/performance-dialog";
 import { PerformanceQuarterOverviewCard } from "@/features/performance/components/performance-quarter-overview";
+import { PerformanceWeightedScoreManager } from "@/features/performance/components/performance-weighted-score-manager";
 import { formatScore } from "@/lib/formatters";
 import { PROJECT_TYPE_OPTIONS } from "@/lib/project-type-labels";
+import type { PerformanceWeightedPageData } from "@/server/application/performance-weighted-score-service";
 
 type EditorState =
   | { mode: "create" }
@@ -85,6 +87,7 @@ export function PerformanceManager({
   filterOptions,
   totalRecordCount,
   quarterOverview,
+  weightedScoreData,
 }: {
   project: ProjectPerformanceContext;
   records: readonly PerformanceListItem[];
@@ -92,6 +95,7 @@ export function PerformanceManager({
   filterOptions: PerformanceFilterOptions;
   totalRecordCount: number;
   quarterOverview: PerformanceQuarterOverview;
+  weightedScoreData: PerformanceWeightedPageData;
 }) {
   const router = useRouter();
   const canCreateRecord =
@@ -534,6 +538,8 @@ export function PerformanceManager({
           </Table>
         </CardContent>
       </Card>
+
+      <PerformanceWeightedScoreManager data={weightedScoreData} />
 
       {editor ? (
         <PerformanceDialog

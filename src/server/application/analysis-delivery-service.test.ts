@@ -34,11 +34,14 @@ function createDependencies(
       findProjectContext: vi.fn(async () => null),
       list: vi.fn(async () => []),
       findById: vi.fn(async () => null),
-      identityExists: vi.fn(async () => false),
       create: vi.fn(async () => "unused"),
       update: vi.fn(async () => false),
       delete: vi.fn(async () => false),
       findRecentScores: vi.fn(async () => []),
+    },
+    performanceWeightedRepository: {
+      findSource: vi.fn(async () => null),
+      saveSnapshot: vi.fn(async () => ({ status: "project_not_found" as const })),
     },
     now: () => new Date("2026-08-24T00:00:00.000Z"),
   };

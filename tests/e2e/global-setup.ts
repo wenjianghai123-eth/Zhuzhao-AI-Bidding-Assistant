@@ -61,10 +61,11 @@ function applyMigrations() {
 
 async function seedGoldenProject() {
   process.env.DATABASE_URL = E2E_DATABASE_URL;
-  const [databaseModule, qingbiaoRuntime, dingbiaoRuntime] = await Promise.all([
+  const [databaseModule, qingbiaoRuntime, dingbiaoRuntime, performanceWeighted] = await Promise.all([
     import("@/server/db/prisma"),
     import("@/server/application/qingbiao-runtime-service"),
     import("@/server/application/dingbiao-runtime-service"),
+    import("@/server/application/performance-weighted-score-service"),
   ]);
   const { prisma } = databaseModule;
   try {
@@ -120,6 +121,26 @@ async function seedGoldenProject() {
         }),
       ),
     });
+
+    const weightedPage = await performanceWeighted.getPerformanceWeightedPageData(
+      golden.project.id,
+    );
+    if (!weightedPage) {
+      throw new Error("Golden E2E weighted performance page is unavailable.");
+    }
+    const weightedSave = await performanceWeighted.savePerformanceWeightedScores(
+      golden.project.id,
+      {
+        expectedInputRevision: weightedPage.inputRevision,
+        start: weightedPage.start,
+        end: weightedPage.end,
+        weightingMethod: weightedPage.weightingMethod,
+        rows: weightedPage.suggestedRows,
+      },
+    );
+    if (weightedSave.status !== "saved") {
+      throw new Error("Golden E2E weighted performance snapshot was not saved.");
+    }
 
     const pageData = await qingbiaoRuntime.getRuntimeQingbiaoPageData(
       golden.project.id,
