@@ -208,17 +208,18 @@ totalScore = performanceScore
 
 ### 排名候选集合策略
 
-Excel 没有明确“推优剔除”只影响 K1 样本，还是也取消后续排名资格。Domain 因此显式支持三种策略：
+当前正式业务基线明确“推优剔除”只影响 K1 样本，不取消后续排名资格。Domain 仍显式支持三种策略：
 
-- `ALL_CANDIDATES`：全部候选单位参与排名，当前默认临时策略；
+- `ALL_CANDIDATES`：全部候选单位参与排名，当前 Application 正式策略；
 - `NON_EXCLUDED_CANDIDATES`：仅未剔除单位参与排名；
 - `EXPLICIT_CANDIDATES`：由上层明确传入排名候选 ID。
 
-默认值不代表最终业务结论。Step 5 接入 Application/UI 前必须保留该显式选择，待业务确认后再决定上层传入哪种策略。
+Application 必须显式传入 `ALL_CANDIDATES`，不得依赖默认参数。
 
 ### 错误与数值边界
 
 - K1 剔除后为空：`QINGBIAO_K1_EMPTY_CANDIDATES`；
+- 自动规则执行后没有剩余 K1 候选：`QINGBIAO_INSUFFICIENT_CANDIDATES_FOR_EXCLUSION`；
 - K1 候选全部缺少净下浮率：`QINGBIAO_K1_MISSING_NET_DISCOUNT_RATES`；
 - 排名集合为空：`QINGBIAO_RANKING_EMPTY_CANDIDATES`；
 - 剔除 ID 不属于当前候选：`QINGBIAO_INVALID_EXCLUDED_CANDIDATE`；
@@ -227,11 +228,13 @@ Excel 没有明确“推优剔除”只影响 K1 样本，还是也取消后续�
 
 Domain 不返回 `NaN`、`Infinity` 或 `undefined` 作为业务计算结果。
 
-## Step 5 Application 采用的清标策略（2026-08-24）
+## Application 采用的清标策略（2026-08-28）
 
-当前根据 20260820 Excel 结构暂定：
+当前正式业务规则为：
 
-> 推优剔除仅影响清标 K1 样本，不取消单位后续报价排名、综合评分和最终排名资格；该解释仍待业务最终确认。
+> 系统按全部候选单位投标总价自动判定4套推优剔除结果；剔除仅影响清标 K1 样本，不取消单位后续报价排名、综合评分和最终排名资格。
+
+自动剔除由 `calculateAutomaticExclusionRules()` 统一计算：报价使用 Decimal 按 `bidPrice DESC` 排序，同报价以 `candidateId ASC` 稳定处理；规则数量依次为 `1`、`2`、`max(1, ROUND_HALF_UP(n/3))`、`max(1, ROUND_HALF_UP(n/4))`。React、Server Action 和 Repository 均不得复制排序或数量公式。
 
 Application 将该策略集中定义为 `QINGBIAO_APPLICATION_RANKING_POLICY`，每次调用 `calculateQingbiaoScenarioV2()` 都显式传入：
 
@@ -254,7 +257,7 @@ ruleIndex 1..4
 
 正式测算要求所有 `ALL_CANDIDATES` 排名候选的必要履约数据完整。任何候选缺失任一项目类型履约时，Domain 错误由 Application 映射为含公司与缺失专业的中文结构化问题，整批不保存，绝不按 0 分继续。
 
-持久化批次还必须满足：16 个场景身份完整且不重复；场景剔除集合与数据库当前规则一致；每个场景结果覆盖项目全部候选；`metadata.rankingCandidatePolicy` 为 `ALL_CANDIDATES`；规则版本为 `qingbiao-20260820-v2`。
+持久化批次还必须满足：16 个场景身份完整且不重复；场景剔除集合与 Repository 按数据库最新报价复算的自动结果一致；每个场景结果覆盖项目全部候选；`metadata.rankingCandidatePolicy` 为 `ALL_CANDIDATES`；规则版本为 `qingbiao-20260828-auto-high-bid-v3`。验证通过后，`QingbiaoExclusionRuleCandidate` 保存为本次系统判定的审计快照。
 
 商标优、技术优继续只展示，不进入 `totalScore`。比例仍以 fraction 通过 Domain/Repository DTO 传递，只在 UI 用 `formatPercentageFraction()` 显示。
 
@@ -334,6 +337,34 @@ totalScore = performanceScore
 - 计算过程不使用 JavaScript 浮点数。
 - 当前不对中间结果舍入；排名使用未舍入值。
 
+## Qingbiao 全场景入围保障测算（2026-08-31）
+
+该模块是 current Qingbiao 输入上的只读反向分析，不持久化结果，也不修改自动推优、K1、B、报价得分、综合得分或排名公式。
+
+### 净下浮率与投标总价
+
+经业务确认，统一换算关系为：
+
+```text
+投标总价 = (1 - 净下浮率)
+           × (最高投标限价 - 不可竞争费)
+           + 不可竞争费
+```
+
+净下浮率在 Domain 内使用 `0..1` fraction，金额与换算中间值均使用 `decimal.js`，不执行中间舍入。该关系由共享 `calculateBidPriceFromNetDiscountRate()` 实现，页面不得自行复制公式。
+
+### 可审计数值策略
+
+- 搜索范围固定为 `0..1` fraction，即 `0%..100%`；
+- 搜索步长固定为 `0.0005` fraction，即 `0.05` 个百分点；
+- 共测试 `2001` 个净下浮率值，端点包含0%和100%；
+- 每个采样点先按新报价重算4条自动推优剔除规则，再对每条规则执行 K2=0/1/2/3 的正式 `calculateQingbiaoScenarioV2()`；
+- TOP5 判断 `finalRank <= 5`，TOP3 判断 `finalRank <= 3`；
+- 连续命中的采样点组成可行区间，允许输出多个不连续区间；显示端点只取实际通过计算的采样点，不向外扩展；
+- 投标总价边界由同一共享换算函数反向映射，展示层按现有金额和百分比精度格式化。
+
+“全场景通用保障区间”是16个场景各自可行区间集合的交集，不是并集。任一场景无可行值，或16套区间没有共同重叠时，交集为空并明确显示“无通用保障区间”。
+
 ## 定标预测（Dingbiao）
 
 状态：Step 6 已按 20260820 口径升级现有 Domain、Application、Repository 和 UI；没有建立并行 V2，也没有修改 Prisma schema。
@@ -341,7 +372,7 @@ totalScore = performanceScore
 ### 清标场景与入围单位
 
 - 正式输入使用 `sourceQingbiaoScenarioId`，从 `getQingbiaoScenarioCatalog(projectId)` 的 16 项 current 目录选择一套具体清标来源；`qingbiaoK2` 单独不能标识来源。
-- 清标场景必须属于当前项目，使用 `qingbiao-20260820-v2` 规则版本，输入修订必须 current，且必须存在有序排名结果；missing、stale 或不可靠 legacy 结果均被阻断。
+- 清标场景必须属于当前项目，使用 `qingbiao-20260828-auto-high-bid-v3` 规则版本，输入修订必须 current，且必须存在有序排名结果；missing、stale 或不可靠 legacy 结果均被阻断。
 - 按所选场景的 `finalRank` 从小到大取得有序 Top5；N=5、N=4、N=3 只能是该序列的前 5、前 4、前 3，不能由用户重录或重排。
 - 候选单位数量不足某个 N 时，仅该 N 返回 `unavailable / insufficient_candidates` 结构化状态；候选数足够的其他 N 仍可计算。
 - 某个 Top N 存在缺失或非法净下浮率时，仅该 N 返回 `unavailable / invalid_net_discount_rate`；不得默认成 0。

@@ -6,6 +6,13 @@ import type {
 import type { ProjectTypeValue } from "@/domain/projects/project-settings";
 
 export const QINGBIAO_20260820_RULE_VERSION = "qingbiao-20260820-v2";
+export const QINGBIAO_20260828_RULE_VERSION =
+  "qingbiao-20260828-auto-high-bid-v3";
+export const CURRENT_QINGBIAO_RULE_VERSION = QINGBIAO_20260828_RULE_VERSION;
+
+export type QingbiaoRuleVersion =
+  | typeof QINGBIAO_20260820_RULE_VERSION
+  | typeof QINGBIAO_20260828_RULE_VERSION;
 
 export type QingbiaoK1RoundingMode = "HALF_UP";
 
@@ -52,6 +59,7 @@ export interface QingbiaoScenarioV2Input {
   excludedCandidateIds: readonly string[];
   candidates: readonly QingbiaoCandidateV2Input[];
   rules: QingbiaoRuleInput;
+  ruleVersion?: QingbiaoRuleVersion;
   rankingCandidatePolicy?: QingbiaoRankingCandidatePolicy;
   roundingPolicy?: QingbiaoK1RoundingPolicy;
 }
@@ -90,7 +98,7 @@ export interface QingbiaoCandidateV2Result {
 
 export interface QingbiaoScenarioV2Result {
   metadata: {
-    ruleVersion: typeof QINGBIAO_20260820_RULE_VERSION;
+    ruleVersion: QingbiaoRuleVersion;
     exclusionRuleId: string;
     excludedCandidateIds: readonly string[];
     k1CandidateIds: readonly string[];

@@ -1,11 +1,15 @@
 import type { RecentPerformanceAverageResult } from "@/domain/performance/company-performance";
 import type { ProjectTypeValue } from "@/domain/projects/project-settings";
 import {
+  calculateAutomaticExclusionRules,
   calculateQingbiaoScenarioV2,
-  QINGBIAO_20260820_RULE_VERSION,
+  CURRENT_QINGBIAO_RULE_VERSION,
   QINGBIAO_EXCLUSION_RULE_INDEXES,
   QINGBIAO_K2_VALUES,
   type CandidatePerformanceInput,
+  type QingbiaoAutomaticExclusionError,
+  type QingbiaoAutomaticExclusionRuleResult,
+  type QingbiaoExclusionRuleIndex,
   type QingbiaoCandidateV2Input,
   type QingbiaoScenarioV2CalculationResult,
   type QingbiaoScenarioV2Input,
@@ -20,14 +24,33 @@ import type {
   SavedQingbiaoCalculationSnapshot,
 } from "@/server/repositories/qingbiao-repository";
 import { PROJECT_TYPE_LABELS } from "@/lib/project-type-labels";
+import type { PerformanceWeightedSnapshotLookupStatus } from "@/server/application/performance-weighted-score-service";
+import {
+  buildQingbiaoEntryGuaranteeViewModel,
+  type QingbiaoEntryGuaranteeCalculator,
+  type QingbiaoEntryGuaranteeViewModel,
+} from "@/server/application/qingbiao-entry-guarantee-service";
+import type {
+  QingbiaoReadiness,
+  QingbiaoReadinessIssue,
+} from "@/server/application/qingbiao-readiness-service";
 
 export const QINGBIAO_APPLICATION_RANKING_POLICY = {
   mode: "ALL_CANDIDATES",
 } as const;
 
+const EXPECTED_QINGBIAO_SCENARIO_COUNT =
+  QINGBIAO_EXCLUSION_RULE_INDEXES.length * QINGBIAO_K2_VALUES.length;
+
 export interface QingbiaoCandidatePageData
   extends QingbiaoProjectCandidateSnapshot {
   performance: CandidatePerformanceInput;
+}
+
+export interface QingbiaoAutomaticExclusionRulePageData
+  extends QingbiaoAutomaticExclusionRuleResult {
+  id: string;
+  label: string | null;
 }
 
 export type QingbiaoCalculationState =
@@ -46,9 +69,14 @@ export interface QingbiaoPageData {
   projectName: string;
   currentInputRevision: number;
   projectTypes: readonly ProjectTypeValue[];
+  totalBidPriceScore: string;
   candidates: readonly QingbiaoCandidatePageData[];
-  exclusionRules: QingbiaoProjectSnapshot["exclusionRules"];
+  exclusionRules: readonly QingbiaoAutomaticExclusionRulePageData[];
+  automaticExclusionErrors: readonly string[];
+  performanceWeightedSnapshotStatus: PerformanceWeightedSnapshotLookupStatus;
+  readiness: QingbiaoReadiness;
   calculationState: QingbiaoCalculationState;
+  entryGuarantee: QingbiaoEntryGuaranteeViewModel;
 }
 
 type PerformanceAverageReader = (
@@ -61,10 +89,42 @@ type QingbiaoScenarioCalculator = (
   input: QingbiaoScenarioV2Input,
 ) => QingbiaoScenarioV2CalculationResult;
 
+type PerformanceSnapshotStatusReader = (
+  projectId: string,
+) => Promise<PerformanceWeightedSnapshotLookupStatus>;
+
+type QingbiaoReadinessReader = (
+  projectId: string,
+) => Promise<QingbiaoReadiness | null>;
+
 export interface QingbiaoServiceDependencies {
   repository: QingbiaoRepository;
   performanceAverageReader: PerformanceAverageReader;
+  performanceSnapshotStatusReader: PerformanceSnapshotStatusReader;
+  readinessReader: QingbiaoReadinessReader;
   scenarioCalculator: QingbiaoScenarioCalculator;
+  entryGuaranteeCalculator: QingbiaoEntryGuaranteeCalculator;
+}
+
+type QingbiaoDiagnosticEvent =
+  | "QINGBIAO_START"
+  | "QINGBIAO_PREFLIGHT_PASS"
+  | "QINGBIAO_VALIDATION_PASS"
+  | "QINGBIAO_RULES_GENERATED"
+  | `QINGBIAO_RULE_${QingbiaoExclusionRuleIndex}_GENERATED`
+  | "QINGBIAO_SCENARIO_CALCULATED"
+  | "QINGBIAO_DOMAIN_COMPLETE"
+  | "QINGBIAO_PERSIST_START"
+  | "QINGBIAO_PERSIST_COMPLETE"
+  | "QINGBIAO_DONE";
+
+function logQingbiaoDiagnostic(
+  event: QingbiaoDiagnosticEvent,
+  details: Readonly<Record<string, string | number>>,
+) {
+  if (process.env.NODE_ENV === "development") {
+    console.info(JSON.stringify({ event, ...details }));
+  }
 }
 
 async function loadCandidatesWithPerformance(
@@ -165,6 +225,35 @@ function formatValidationError(
   }
 }
 
+function formatAutomaticExclusionError(
+  error: QingbiaoAutomaticExclusionError,
+) {
+  return error.message;
+}
+
+function calculateProjectAutomaticExclusions(project: QingbiaoProjectSnapshot) {
+  return calculateAutomaticExclusionRules(
+    project.candidates.map((candidate) => ({
+      candidateId: candidate.id,
+      bidPrice: candidate.bidPrice,
+    })),
+  );
+}
+
+function toAutomaticExclusionRulePageData(
+  project: QingbiaoProjectSnapshot,
+  automaticRules: readonly QingbiaoAutomaticExclusionRuleResult[],
+) {
+  return automaticRules.flatMap((automaticRule) => {
+    const persistedRule = project.exclusionRules.find(
+      (rule) => rule.ruleIndex === automaticRule.ruleIndex,
+    );
+    return persistedRule
+      ? [{ ...automaticRule, id: persistedRule.id, label: persistedRule.label }]
+      : [];
+  });
+}
+
 function hasFourExclusionRules(project: QingbiaoProjectSnapshot) {
   return QINGBIAO_EXCLUSION_RULE_INDEXES.every((ruleIndex) =>
     project.exclusionRules.some((rule) => rule.ruleIndex === ruleIndex),
@@ -180,27 +269,58 @@ export async function getQingbiaoPageData(
     return null;
   }
 
-  const [candidates, latestCalculation] = await Promise.all([
+  const [
+    candidates,
+    latestCalculation,
+    performanceWeightedSnapshotStatus,
+    readiness,
+  ] =
+    await Promise.all([
     loadCandidatesWithPerformance(
       project,
       dependencies.performanceAverageReader,
     ),
     dependencies.repository.findSavedCalculation(projectId),
+    dependencies.performanceSnapshotStatusReader(projectId),
+    dependencies.readinessReader(projectId),
   ]);
+  if (!readiness) {
+    return null;
+  }
   const calculationState: QingbiaoCalculationState = !latestCalculation
     ? { status: "not_calculated", calculation: null }
     : latestCalculation.inputRevision === project.inputRevision
       ? { status: "current", calculation: latestCalculation }
       : { status: "stale", calculation: latestCalculation };
+  const automaticExclusions = calculateProjectAutomaticExclusions(project);
+  const entryGuarantee = buildQingbiaoEntryGuaranteeViewModel({
+    calculationStatus: calculationState.status,
+    savedScenarioCount: calculationState.calculation?.scenarios.length ?? 0,
+    performanceWeightedSnapshotStatus,
+    candidates,
+    exclusionRules: project.exclusionRules,
+    rules: project.rules,
+    calculator: dependencies.entryGuaranteeCalculator,
+  });
 
   return {
     projectId: project.projectId,
     projectName: project.projectName,
     currentInputRevision: project.inputRevision,
     projectTypes: project.projectTypes,
+    totalBidPriceScore: project.rules.totalBidPriceScore,
     candidates,
-    exclusionRules: project.exclusionRules,
+    exclusionRules: toAutomaticExclusionRulePageData(
+      project,
+      automaticExclusions.rules,
+    ),
+    automaticExclusionErrors: automaticExclusions.errors.map(
+      formatAutomaticExclusionError,
+    ),
+    performanceWeightedSnapshotStatus,
+    readiness,
     calculationState,
+    entryGuarantee,
   };
 }
 
@@ -211,13 +331,33 @@ export type CalculateAllQingbiaoScenariosResult =
     }
   | { status: "project_not_found" }
   | { status: "input_revision_conflict" }
-  | { status: "validation_error"; issues: readonly string[] }
+  | {
+      status: "validation_error";
+      issues: readonly string[];
+      readinessIssues?: readonly QingbiaoReadinessIssue[];
+    }
   | { status: "persistence_error" };
 
 export async function calculateAllQingbiaoScenarios(
   projectId: string,
   dependencies: QingbiaoServiceDependencies,
 ): Promise<CalculateAllQingbiaoScenariosResult> {
+  logQingbiaoDiagnostic("QINGBIAO_START", { projectId });
+  const readiness = await dependencies.readinessReader(projectId);
+  if (!readiness) {
+    return { status: "project_not_found" };
+  }
+  if (!readiness.ready) {
+    return {
+      status: "validation_error",
+      issues: readiness.issues.map((issue) => issue.message),
+      readinessIssues: readiness.issues,
+    };
+  }
+  logQingbiaoDiagnostic("QINGBIAO_PREFLIGHT_PASS", {
+    projectId,
+    issueCount: 0,
+  });
   const project = await dependencies.repository.findProject(projectId);
   if (!project) {
     return { status: "project_not_found" };
@@ -235,6 +375,50 @@ export async function calculateAllQingbiaoScenarios(
     };
   }
 
+  const automaticExclusions = calculateProjectAutomaticExclusions(project);
+  if (automaticExclusions.status === "invalid") {
+    return {
+      status: "validation_error",
+      issues: automaticExclusions.errors.map(formatAutomaticExclusionError),
+    };
+  }
+  logQingbiaoDiagnostic("QINGBIAO_RULES_GENERATED", {
+    projectId,
+    ruleCount: automaticExclusions.rules.length,
+  });
+  for (const automaticRule of automaticExclusions.rules) {
+    logQingbiaoDiagnostic(
+      `QINGBIAO_RULE_${automaticRule.ruleIndex}_GENERATED`,
+      {
+        projectId,
+        candidateCount: automaticRule.candidateCount,
+        exclusionCount: automaticRule.exclusionCount,
+        k1CandidateCount:
+          automaticRule.candidateCount - automaticRule.exclusionCount,
+      },
+    );
+  }
+
+  const performanceSnapshotStatus =
+    await dependencies.performanceSnapshotStatusReader(projectId);
+  if (performanceSnapshotStatus === "not_saved") {
+    return {
+      status: "validation_error",
+      issues: [
+        "当前履约加权分尚未保存，请先完成履约加权分计算与保存。",
+      ],
+    };
+  }
+  if (performanceSnapshotStatus === "stale") {
+    return {
+      status: "validation_error",
+      issues: ["当前履约加权分已过期，请先重新计算并保存履约加权分。"],
+    };
+  }
+  if (performanceSnapshotStatus === "project_not_found") {
+    return { status: "project_not_found" };
+  }
+
   const candidates = await loadCandidatesWithPerformance(
     project,
     dependencies.performanceAverageReader,
@@ -242,6 +426,23 @@ export async function calculateAllQingbiaoScenarios(
   const candidatesById = new Map(
     candidates.map((candidate) => [candidate.id, candidate]),
   );
+  const missingPerformanceCandidates = candidates.filter(
+    (candidate) => candidate.performance.status === "missing",
+  );
+  if (missingPerformanceCandidates.length > 0) {
+    return {
+      status: "validation_error",
+      issues: [
+        `部分候选单位缺少履约数据：${missingPerformanceCandidates
+          .map((candidate) => `“${candidate.companyName}”`)
+          .join("、")}。请先补充履约信息。`,
+      ],
+    };
+  }
+  logQingbiaoDiagnostic("QINGBIAO_VALIDATION_PASS", {
+    projectId,
+    candidateCount: candidates.length,
+  });
   const scenarios: QingbiaoScenarioV2Result[] = [];
   const issues: string[] = [];
 
@@ -249,7 +450,10 @@ export async function calculateAllQingbiaoScenarios(
     const exclusionRule = project.exclusionRules.find(
       (rule) => rule.ruleIndex === ruleIndex,
     );
-    if (!exclusionRule) {
+    const automaticRule = automaticExclusions.rules.find(
+      (rule) => rule.ruleIndex === ruleIndex,
+    );
+    if (!exclusionRule || !automaticRule) {
       issues.push(`推优规则${ruleIndex}不存在。`);
       continue;
     }
@@ -260,9 +464,10 @@ export async function calculateAllQingbiaoScenarios(
           exclusionRuleId: exclusionRule.id,
           qingbiaoK2Value,
         },
-        excludedCandidateIds: exclusionRule.excludedCandidateIds,
+        excludedCandidateIds: automaticRule.excludedCandidateIds,
         candidates: candidates.map(toDomainCandidate),
         rules: project.rules,
+        ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
         rankingCandidatePolicy: QINGBIAO_APPLICATION_RANKING_POLICY,
       });
 
@@ -275,17 +480,45 @@ export async function calculateAllQingbiaoScenarios(
         continue;
       }
       scenarios.push(calculation.value);
+      logQingbiaoDiagnostic("QINGBIAO_SCENARIO_CALCULATED", {
+        projectId,
+        completed: scenarios.length,
+        total: EXPECTED_QINGBIAO_SCENARIO_COUNT,
+        ruleIndex,
+        qingbiaoK2Value,
+      });
     }
   }
 
   if (issues.length > 0) {
     return { status: "validation_error", issues: [...new Set(issues)] };
   }
+  logQingbiaoDiagnostic("QINGBIAO_DOMAIN_COMPLETE", {
+    projectId,
+    scenarioCount: scenarios.length,
+  });
 
+  logQingbiaoDiagnostic("QINGBIAO_PERSIST_START", {
+    projectId,
+    scenarioCount: scenarios.length,
+  });
   const saved = await dependencies.repository.saveCalculationV2({
     projectId,
     expectedInputRevision: project.inputRevision,
-    ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+    ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
+    exclusionRuleSnapshots: automaticExclusions.rules.map((rule) => {
+      const persistedRule = project.exclusionRules.find(
+        (candidateRule) => candidateRule.ruleIndex === rule.ruleIndex,
+      );
+      if (!persistedRule) {
+        throw new Error(`Qingbiao exclusion rule ${rule.ruleIndex} is missing.`);
+      }
+      return {
+        exclusionRuleId: persistedRule.id,
+        ruleIndex: rule.ruleIndex,
+        excludedCandidateIds: rule.excludedCandidateIds,
+      };
+    }),
     scenarios,
   });
   if (saved.status === "project_not_found") {
@@ -303,6 +536,14 @@ export async function calculateAllQingbiaoScenarios(
   if (!persistedCalculation) {
     return { status: "persistence_error" };
   }
+  logQingbiaoDiagnostic("QINGBIAO_PERSIST_COMPLETE", {
+    projectId,
+    scenarioCount: persistedCalculation.scenarios.length,
+  });
+  logQingbiaoDiagnostic("QINGBIAO_DONE", {
+    projectId,
+    scenarioCount: persistedCalculation.scenarios.length,
+  });
   return { status: "calculated", calculation: persistedCalculation };
 }
 

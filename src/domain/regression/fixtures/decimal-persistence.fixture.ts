@@ -11,10 +11,10 @@ export const decimalPersistenceGolden = {
     { expression: "1000 / 3", numerator: "1000", denominator: "3", expected: "333.33333333333333333" },
   ],
   qingbiao: {
-    k1Rates: ["0.1", "0.11", "0.13"],
-    k1: "0.11333333333333333333",
+    k1Rates: ["0.1", "0.11", "0.13", "0.14", "0.16"],
+    k1: "0.128",
     k2Rate: "0.01",
-    referencePriceB: "889.87666666666666667",
+    referencePriceB: "876.662",
   },
   dingbiao: {
     finalistRates: ["0.1", "0.11", "0.13"],

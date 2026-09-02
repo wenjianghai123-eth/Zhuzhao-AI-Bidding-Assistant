@@ -1,5 +1,7 @@
 # Golden Case 20260820-A 全流程业务一致性基线
 
+> 历史状态：该案例冻结的是“人工指定4套 `excludedCandidateIds`”的旧业务语义，自 2026-08-28 起不再代表当前 release。fixture 与 legacy 测试继续保留用于审计，当前正式基线见 `docs/20260828-full-golden-case.md`。
+
 ## 1. 基线来源与结论
 
 业务来源文件为 `docs/reference/投标伴侣方案设计_20260820.xlsx`。逐 Sheet 复核结果如下：
@@ -16,7 +18,7 @@
 静态机器可读基线位于：
 
 - `src/domain/regression/fixtures/20260820-full-golden.fixture.ts`
-- `src/domain/regression/20260820-full-golden.test.ts`
+- `src/domain/regression/20260820-legacy-golden.test.ts`
 
 fixture 不导入生产清标、定标或分析计算器来生成 expected；所有 16 套清标结果和 144 套定标结果均为静态常量。
 
@@ -256,19 +258,17 @@ M = (1 - dingbiaoK1 - finalDrawValue) × (1000 - 100) + 100
 
 比较字段覆盖 K1、B、报价差值、报价名次、报价得分、履约平均/得分、综合得分、最终名次、Top5、来源身份、N、抽值、M、胜者、定标完整排序、全局和分维度分析。失败时测试按固定场景顺序停止在第一处差异，并在断言信息中报告位置，同时由 Vitest 展示 expected/actual diff；禁止修改 expected 迎合错误实现。
 
-运行命令：
+历史 fixture 完整性由以下命令覆盖：
 
 ```bash
-pnpm verify:business-golden
+pnpm exec vitest run src/domain/regression/20260820-legacy-golden.test.ts
 ```
 
-成功输出必须包含：
+成功结果应显示2个 legacy 测试通过：
 
 ```text
-Qingbiao 16/16 matched
-Dingbiao 144/144 matched
-Analysis matched
-Status PASS
+Legacy Golden Case 20260820-A historical fixture
+2 passed
 ```
 
 ## 9. Excel 冲突与未决规则
@@ -282,4 +282,4 @@ Status PASS
 5. 缺失履约数据策略、异常净下浮率处理和不足 5 家候选单位策略不属于本条正常流 Golden Case，继续由各自异常测试覆盖。
 6. SQLite NUMERIC 会把循环小数持久化为二进制浮点近似；本案例通过选择可形成有限小数的 N=3 平均值隔离了该技术边界。后续应单独验证循环小数快照的精度、序列化和 PostgreSQL 迁移策略，不能用本案例的 PASS 推断该边界已经解决。
 
-本步骤只新增 fixture、回归测试、验证命令与文档；没有修改 Excel、核心业务公式、Prisma schema/migration、Repository 业务行为、React 页面、报告模板或旧 Golden fixture。
+该历史记录未被无痕改写。2026-08-28 的正式规则变更另建 `Golden Case 20260828-B`，没有用旧 expected 约束新的自动剔除行为。

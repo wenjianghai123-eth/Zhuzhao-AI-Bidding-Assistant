@@ -5,6 +5,7 @@ import {
   calculateQingbiaoScenarioV2,
   type QingbiaoScenarioV2Input,
 } from "@/domain/qingbiao";
+import { calculateEntryGuaranteeByScenario } from "@/domain/qingbiao-reverse-simulation";
 import {
   calculateAllQingbiaoScenarios,
   getQingbiaoPageData,
@@ -59,15 +60,15 @@ const projectFixture: QingbiaoProjectSnapshot = {
     isOurCompany: index === 0,
   })),
   exclusionRules: [
-    { id: "rule-1", ruleIndex: 1, label: null, excludedCandidateIds: ["c6"] },
+    { id: "rule-1", ruleIndex: 1, label: null, auditSnapshotCandidateIds: ["c6"] },
     {
       id: "rule-2",
       ruleIndex: 2,
       label: null,
-      excludedCandidateIds: ["c5", "c6"],
+      auditSnapshotCandidateIds: ["c5", "c6"],
     },
-    { id: "rule-3", ruleIndex: 3, label: null, excludedCandidateIds: ["c4"] },
-    { id: "rule-4", ruleIndex: 4, label: null, excludedCandidateIds: [] },
+    { id: "rule-3", ruleIndex: 3, label: null, auditSnapshotCandidateIds: ["c4"] },
+    { id: "rule-4", ruleIndex: 4, label: null, auditSnapshotCandidateIds: [] },
   ],
 };
 
@@ -171,6 +172,7 @@ function toCatalog(
 function createDependencies(options?: {
   project?: QingbiaoProjectSnapshot;
   missingCompany?: string;
+  performanceSnapshotStatus?: "current" | "not_saved" | "stale";
 }) {
   let currentProject = options?.project ?? projectFixture;
   let savedInput: SaveQingbiaoCalculationV2Input | null = null;
@@ -189,6 +191,9 @@ function createDependencies(options?: {
   };
   const dependencies: QingbiaoServiceDependencies = {
     repository,
+    readinessReader: async () => ({ ready: true, issues: [] }),
+    performanceSnapshotStatusReader: async () =>
+      options?.performanceSnapshotStatus ?? "current",
     performanceAverageReader: async (projectId, candidateId) => {
       if (projectId !== currentProject.projectId) {
         throw new Error("Performance lookup escaped the current project.");
@@ -210,6 +215,7 @@ function createDependencies(options?: {
       calculatorInputs.push(input);
       return calculateQingbiaoScenarioV2(input);
     },
+    entryGuaranteeCalculator: calculateEntryGuaranteeByScenario,
   };
 
   return {
@@ -254,14 +260,38 @@ describe("qingbiao V2 application service", () => {
       fixture.calculatorInputs
         .filter((input) => input.scenario.exclusionRuleId === "rule-2")
         .every(
-          (input) => input.excludedCandidateIds.join(",") === "c5,c6",
+          (input) => input.excludedCandidateIds.join(",") === "c6,c4",
         ),
     ).toBe(true);
     expect(
       fixture.calculatorInputs
         .filter((input) => input.scenario.exclusionRuleId === "rule-4")
-        .every((input) => input.excludedCandidateIds.length === 0),
+        .every(
+          (input) => input.excludedCandidateIds.join(",") === "c6,c4",
+        ),
     ).toBe(true);
+    expect(fixture.getSavedInput()?.exclusionRuleSnapshots).toEqual([
+      {
+        exclusionRuleId: "rule-1",
+        ruleIndex: 1,
+        excludedCandidateIds: ["c6"],
+      },
+      {
+        exclusionRuleId: "rule-2",
+        ruleIndex: 2,
+        excludedCandidateIds: ["c6", "c4"],
+      },
+      {
+        exclusionRuleId: "rule-3",
+        ruleIndex: 3,
+        excludedCandidateIds: ["c6", "c4"],
+      },
+      {
+        exclusionRuleId: "rule-4",
+        ruleIndex: 4,
+        excludedCandidateIds: ["c6", "c4"],
+      },
+    ]);
     expect(
       result.calculation.scenarios.every(
         (scenario) => scenario.orderedResults.length === 6,
@@ -296,22 +326,37 @@ describe("qingbiao V2 application service", () => {
       return;
     }
     expect(result.issues).toHaveLength(1);
+    expect(result.issues[0]).toContain("部分候选单位缺少履约数据");
+    expect(result.issues[0]).toContain("Company C");
     expect(fixture.getSavedInput()).toBeNull();
   });
 
-  it("rejects a rule that excludes every candidate", async () => {
+  it.each([
+    [
+      "not_saved" as const,
+      "当前履约加权分尚未保存，请先完成履约加权分计算与保存。",
+    ],
+    [
+      "stale" as const,
+      "当前履约加权分已过期，请先重新计算并保存履约加权分。",
+    ],
+  ])("blocks a %s performance snapshot with a specific issue", async (status, issue) => {
+    const fixture = createDependencies({ performanceSnapshotStatus: status });
+
+    const result = await calculateAllQingbiaoScenarios(
+      projectFixture.projectId,
+      fixture.dependencies,
+    );
+
+    expect(result).toEqual({ status: "validation_error", issues: [issue] });
+    expect(fixture.calculatorInputs).toHaveLength(0);
+    expect(fixture.getSavedInput()).toBeNull();
+  });
+
+  it("rejects insufficient candidate counts without reducing rule 2", async () => {
     const project = {
       ...projectFixture,
-      exclusionRules: projectFixture.exclusionRules.map((rule) =>
-        rule.ruleIndex === 1
-          ? {
-              ...rule,
-              excludedCandidateIds: projectFixture.candidates.map(
-                (candidate) => candidate.id,
-              ),
-            }
-          : rule,
-      ),
+      candidates: projectFixture.candidates.slice(0, 2),
     } satisfies QingbiaoProjectSnapshot;
     const fixture = createDependencies({ project });
 
@@ -321,7 +366,36 @@ describe("qingbiao V2 application service", () => {
     );
 
     expect(result.status).toBe("validation_error");
+    expect(result).toMatchObject({
+      issues: [
+        "当前候选单位数量不足，规则2执行后没有可用于计算K1的单位，请检查候选单位设置。",
+      ],
+    });
     expect(fixture.getSavedInput()).toBeNull();
+  });
+
+  it("derives page exclusions from the latest bid prices, not stored snapshots", async () => {
+    const project = {
+      ...projectFixture,
+      exclusionRules: projectFixture.exclusionRules.map((rule) => ({
+        ...rule,
+        auditSnapshotCandidateIds: ["c1"],
+      })),
+    } satisfies QingbiaoProjectSnapshot;
+    const fixture = createDependencies({ project });
+
+    const page = await getQingbiaoPageData(
+      project.projectId,
+      fixture.dependencies,
+    );
+
+    expect(page?.exclusionRules.map((rule) => rule.excludedCandidateIds))
+      .toEqual([
+        ["c6"],
+        ["c6", "c4"],
+        ["c6", "c4"],
+        ["c6", "c4"],
+      ]);
   });
 
   it("reports current and stale state while preserving catalog identity and rank", async () => {

@@ -1,9 +1,18 @@
 import { calculateQingbiaoScenarioV2 } from "@/domain/qingbiao";
-import { getSavedPerformanceAverage } from "@/server/application/performance-weighted-score-service";
+import { calculateEntryGuaranteeByScenario } from "@/domain/qingbiao-reverse-simulation";
 import {
-  ensureQingbiaoExclusionRules,
-  saveQingbiaoExclusionRule,
-} from "@/server/application/qingbiao-exclusion-rule-service";
+  getPerformanceWeightedPageData,
+  getPerformanceWeightedSnapshotStatus,
+  getSavedPerformanceAverage,
+} from "@/server/application/performance-weighted-score-service";
+import { getProjectCandidates } from "@/server/application/project-candidate-service";
+import { getProjectOverview } from "@/server/application/project-catalog-service";
+import { getProjectSettings } from "@/server/application/project-settings-service";
+import {
+  getQingbiaoReadiness,
+  type QingbiaoReadinessDependencies,
+} from "@/server/application/qingbiao-readiness-service";
+import { ensureQingbiaoExclusionRules } from "@/server/application/qingbiao-exclusion-rule-service";
 import {
   calculateAllQingbiaoScenarios,
   getQingbiaoPageData,
@@ -12,6 +21,18 @@ import {
 import { prismaQingbiaoRepository } from "@/server/repositories/qingbiao-repository";
 import { prismaQingbiaoExclusionRuleRepository } from "@/server/repositories/qingbiao-exclusion-rule-repository";
 
+const readinessDependencies: QingbiaoReadinessDependencies = {
+  projectReader: getProjectOverview,
+  settingsReader: getProjectSettings,
+  candidatesReader: getProjectCandidates,
+  performanceReader: (projectId) =>
+    getPerformanceWeightedPageData(projectId, {}),
+};
+
+export function getRuntimeQingbiaoReadiness(projectId: string) {
+  return getQingbiaoReadiness(projectId, readinessDependencies);
+}
+
 const runtimeDependencies = {
   repository: prismaQingbiaoRepository,
   performanceAverageReader: async (
@@ -19,7 +40,10 @@ const runtimeDependencies = {
     candidateId: string,
     projectTypes: Parameters<typeof getSavedPerformanceAverage>[2],
   ) => getSavedPerformanceAverage(projectId, candidateId, projectTypes),
+  performanceSnapshotStatusReader: getPerformanceWeightedSnapshotStatus,
+  readinessReader: getRuntimeQingbiaoReadiness,
   scenarioCalculator: calculateQingbiaoScenarioV2,
+  entryGuaranteeCalculator: calculateEntryGuaranteeByScenario,
 };
 
 export async function getRuntimeQingbiaoPageData(projectId: string) {
@@ -37,19 +61,6 @@ export async function calculateAllRuntimeQingbiaoScenarios(projectId: string) {
     return { status: "project_not_found" } as const;
   }
   return calculateAllQingbiaoScenarios(projectId, runtimeDependencies);
-}
-
-export function saveRuntimeQingbiaoExclusionRule(
-  projectId: string,
-  exclusionRuleId: string,
-  candidateIds: readonly string[],
-) {
-  return saveQingbiaoExclusionRule(
-    projectId,
-    exclusionRuleId,
-    candidateIds,
-    { repository: prismaQingbiaoExclusionRuleRepository },
-  );
 }
 
 export function getRuntimeQingbiaoScenarioCatalog(projectId: string) {

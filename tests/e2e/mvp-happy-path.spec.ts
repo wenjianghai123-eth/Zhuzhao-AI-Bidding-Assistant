@@ -1,6 +1,11 @@
 import { expect, type Page, test } from "@playwright/test";
 
+import {
+  CURRENT_QINGBIAO_RULE_VERSION,
+  QINGBIAO_20260820_RULE_VERSION,
+} from "@/domain/qingbiao";
 import { fullGolden20260820Fixture as golden } from "@/domain/regression/fixtures/20260820-full-golden.fixture";
+import { saveSynchronizedPerformanceWeightedScores } from "@/server/application/performance-weighted-score-service";
 import { prisma } from "@/server/db/prisma";
 
 const acceptanceProjectName = "RC浏览器全流程验收项目";
@@ -170,46 +175,443 @@ async function addPerformance(
   companyName: string,
   score: string,
 ) {
-  await page
-    .getByRole("button", { name: "新增履约记录" })
-    .first()
-    .click();
-  const dialog = page.getByRole("dialog", { name: "新增履约记录" });
-  await dialog
-    .getByRole("combobox", { name: "履约单位", exact: true })
-    .click();
-  await page.getByRole("option", { name: companyName, exact: true }).click();
-  await dialog.getByLabel("分类分级等级").fill("A");
-  await dialog.getByLabel("年份").fill("2026");
-  await dialog.getByLabel("季度评分").fill(score);
-  await expect(
-    dialog.getByRole("combobox", { name: "项目类型", exact: true }),
-  ).toContainText("幕墙");
-  await expect(
-    dialog.getByRole("combobox", { name: "季度", exact: true }),
-  ).toContainText("第一季度");
-  await dialog.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(dialog).toBeHidden();
-  await expect(
-    page
-      .getByRole("row")
-      .filter({ hasText: companyName })
-      .filter({ hasText: "第一季度" }),
-  ).toBeVisible();
-}
-
-async function saveAllDirtyExclusionRules(page: Page) {
-  for (let remaining = 4; remaining > 0; remaining -= 1) {
-    const dirtyButtons = page.getByRole("button", {
-      name: "保存剔除配置",
-    });
-    await expect(dirtyButtons).toHaveCount(remaining);
-    await dirtyButtons.first().click();
-    await expect(dirtyButtons).toHaveCount(remaining - 1);
+  const performanceModule = page.getByTestId("performance-weighted-score");
+  const input = page.getByLabel(`${companyName} 2026 Q1 履约分`);
+  if ((await input.count()) === 0) {
+    await performanceModule.getByRole("combobox", { name: "项目类型筛选" }).click();
+    await page.getByRole("option", { name: "幕墙", exact: true }).click();
+    await performanceModule.getByRole("button", { name: "从候选单位同步" }).click();
   }
+  await input.fill(score);
 }
 
-test("履约信息支持五条件组合、空结果和重置", async ({ page }) => {
+const preflightCandidates = [
+  ["preflight-c1", "前检查甲公司", "900"],
+  ["preflight-c2", "前检查乙公司", "910"],
+  ["preflight-c3", "前检查丙公司", "920"],
+] as const;
+
+async function seedPreflightProject(
+  projectId: string,
+  options?: {
+    omitSettings?: boolean;
+    invalidFirstBidPrice?: boolean;
+    omitFirstPerformance?: boolean;
+  },
+) {
+  const seededCandidates = preflightCandidates;
+  await prisma.project.deleteMany({ where: { id: projectId } });
+  await prisma.project.create({
+    data: {
+      id: projectId,
+      name: `清标前检查 ${projectId}`,
+      ...(options?.omitSettings
+        ? {}
+        : {
+            rule: {
+            create: {
+              maxBidPrice: "1000",
+              nonCompetitiveFee: "100",
+              totalBidPriceScore: "40",
+              rankDeduction: "2",
+              finalDrawValue1: "0",
+              finalDrawValue2: "0.01",
+              finalDrawValue3: "0.02",
+              projectTypes: { create: { projectType: "CURTAIN_WALL" } },
+            },
+            },
+          }),
+      candidates: {
+        create: seededCandidates.map(([id, companyName, bidPrice], index) => ({
+          id: `${projectId}-${id}`,
+          companyName,
+          bidPrice:
+            index === 0 && options?.invalidFirstBidPrice ? "0" : bidPrice,
+          netDiscountRate: "0.1",
+          trademarkScore: "0",
+          technicalScore: "0",
+          similarExperienceScore: "5",
+          otherScore: "5",
+          isOurCompany: index === 0,
+        })),
+      },
+    },
+  });
+  if (options?.omitSettings) {
+    return;
+  }
+  await prisma.companyPerformance.createMany({
+    data: seededCandidates.flatMap(([id, companyName], index) =>
+      index === 0 && options?.omitFirstPerformance
+        ? []
+        : [
+            {
+              projectId,
+              candidateId: `${projectId}-${id}`,
+              companyName,
+              projectType: "CURTAIN_WALL" as const,
+              classificationLevel: "A",
+              year: 2026,
+              quarter: 2,
+              score: String(80 + index),
+            },
+          ],
+    ),
+  });
+  if (options?.omitFirstPerformance) {
+    return;
+  }
+  const weighted = await saveSynchronizedPerformanceWeightedScores(projectId);
+  expect(weighted.status).toBe("saved");
+}
+
+async function delayQingbiaoServerActions(page: Page) {
+  let requestCount = 0;
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (request.method() === "POST" && request.headers()["next-action"]) {
+      requestCount += 1;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 400));
+    }
+    await route.continue();
+  });
+  return () => requestCount;
+}
+
+test("清标前检查定位缺失参数并可导航到参数设置", async ({ page }) => {
+  const projectId = "e2e-qingbiao-preflight-settings";
+  await seedPreflightProject(projectId, { omitSettings: true });
+
+  await page.goto(`/projects/${projectId}/qingbiao`);
+  const button = page.getByTestId("qingbiao-calculate-button");
+  await expect(button).toBeEnabled();
+  await button.click();
+  const dialog = page.getByRole("dialog", { name: "暂不能进行清标测算" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText(
+    "缺少：项目类型、最高投标限价、不可竞争费、总投标报价分值、排名递减扣分值",
+  );
+  await dialog.getByRole("link", { name: "前往参数设置" }).click();
+  await expect(page).toHaveURL(`/projects/${projectId}/settings`);
+});
+
+test("清标前检查一次显示候选和履约问题，修复后可再次执行", async ({
+  page,
+}) => {
+  const projectId = "e2e-qingbiao-preflight-retry";
+  await seedPreflightProject(projectId, {
+    invalidFirstBidPrice: true,
+    omitFirstPerformance: true,
+  });
+  const getRequestCount = await delayQingbiaoServerActions(page);
+
+  await page.goto(`/projects/${projectId}/qingbiao`);
+  const button = page.getByTestId("qingbiao-calculate-button");
+  await button.click();
+  const dialog = page.getByRole("dialog", { name: "暂不能进行清标测算" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("前检查甲公司");
+  await expect(dialog).toContainText("投标总价必须是大于0的有效数字");
+  await expect(dialog).toContainText("缺少“幕墙”履约数据");
+  await expect(button).toHaveText("清标测算");
+  await dialog.getByRole("button", { name: "关闭" }).click();
+
+  await prisma.projectCandidate.update({
+    where: { id: `${projectId}-preflight-c1` },
+    data: { bidPrice: "900" },
+  });
+  await prisma.companyPerformance.create({
+    data: {
+      projectId,
+      candidateId: `${projectId}-preflight-c1`,
+      companyName: "前检查甲公司",
+      projectType: "CURTAIN_WALL",
+      classificationLevel: "A",
+      year: 2026,
+      quarter: 2,
+      score: "80",
+    },
+  });
+  const weighted = await saveSynchronizedPerformanceWeightedScores(projectId);
+  expect(weighted.status).toBe("saved");
+
+  await button.click();
+  await expect(button).toHaveText("清标测算中...");
+  await expect(page.getByText("清标测算完成，共生成16套清标场景。"))
+    .toBeVisible();
+  await expect(button).toHaveText("清标测算");
+  await expect(page.getByRole("heading", { name: "清标测算表" })).toBeVisible();
+  await expect(
+    page.getByTestId("qingbiao-result-wide-table").locator("tbody tr"),
+  ).toHaveCount(3);
+  expect(getRequestCount()).toBe(2);
+  expect(await prisma.qingbiaoScenario.count({ where: { projectId } })).toBe(16);
+});
+
+test("LAN hydration smoke：清标点击链与8家自动剔除结果", async ({ page }) => {
+  const projectId = "e2e-automatic-exclusion-eight";
+  const browserDiagnosticEvents: string[] = [];
+  page.on("console", (message) => {
+    if (message.text().includes("QINGBIAO_CLICK")) {
+      browserDiagnosticEvents.push(message.text());
+    }
+  });
+  const automaticCandidates = [
+    ["auto-eight-c1", "自动规则A公司", "800"],
+    ["auto-eight-c2", "自动规则B公司", "810"],
+    ["auto-eight-c3", "自动规则C公司", "820"],
+    ["auto-eight-c4", "自动规则D公司", "830"],
+    ["auto-eight-c5", "自动规则E公司", "840"],
+    ["auto-eight-c6", "自动规则F公司", "850"],
+    ["auto-eight-c7", "自动规则G公司", "860"],
+    ["auto-eight-c8", "自动规则H公司", "870"],
+  ] as const;
+
+  await prisma.project.deleteMany({ where: { id: projectId } });
+  await prisma.project.create({
+    data: {
+      id: projectId,
+      name: "8家候选自动推优规则验收项目",
+      rule: {
+        create: {
+          maxBidPrice: "1000",
+          nonCompetitiveFee: "100",
+          totalBidPriceScore: "40",
+          rankDeduction: "2",
+          finalDrawValue1: "0",
+          finalDrawValue2: "0.01",
+          finalDrawValue3: "0.02",
+          projectTypes: { create: { projectType: "CURTAIN_WALL" } },
+        },
+      },
+      candidates: {
+        create: automaticCandidates.map(([id, companyName, bidPrice], index) => ({
+          id,
+          companyName,
+          bidPrice,
+          netDiscountRate: `0.${String(10 + index).padStart(2, "0")}`,
+          trademarkScore: "0",
+          technicalScore: "0",
+          similarExperienceScore: "5",
+          otherScore: "5",
+          isOurCompany: index === 3,
+        })),
+      },
+    },
+  });
+  await prisma.companyPerformance.createMany({
+    data: automaticCandidates.map(([id, companyName], index) => ({
+      projectId,
+      candidateId: id,
+      companyName,
+      projectType: "CURTAIN_WALL" as const,
+      classificationLevel: "A",
+      year: 2026,
+      quarter: 2,
+      score: String(80 + index),
+    })),
+  });
+  const weighted = await saveSynchronizedPerformanceWeightedScores(projectId);
+  expect(weighted.status).toBe("saved");
+
+  await page.goto(`/projects/${projectId}/qingbiao`);
+  await expect(page.getByText("当前尚未生成清标结论，请先进行清标测算。"))
+    .toBeVisible();
+  await expect(
+    page.getByTestId("qingbiao-entry-guarantee-not_calculated"),
+  ).toContainText("当前尚未完成清标测算");
+  await expect(page.getByRole("button", { name: "保存剔除配置" }))
+    .toHaveCount(0);
+  const expectedBefore = [
+    ["自动规则H公司"],
+    ["自动规则H公司", "自动规则G公司"],
+    ["自动规则H公司", "自动规则G公司", "自动规则F公司"],
+    ["自动规则H公司", "自动规则G公司"],
+  ] as const;
+  for (const [offset, companyNames] of expectedBefore.entries()) {
+    const card = page.getByTestId(`automatic-exclusion-rule-${offset + 1}`);
+    await expect(card).toContainText(`自动剔除 ${companyNames.length} 家`);
+    for (const companyName of companyNames) {
+      await expect(card).toContainText(companyName);
+    }
+  }
+
+  await page.goto(`/projects/${projectId}/candidates`);
+  const candidateA = candidateRow(page, "自动规则A公司");
+  await candidateA.getByLabel(/投标总价$/).fill("900");
+  await waitForCandidateSave(page, "自动规则A公司");
+  await page.goto(`/projects/${projectId}/qingbiao`);
+  const refreshedRuleOne = page.getByTestId("automatic-exclusion-rule-1");
+  await expect(refreshedRuleOne).toContainText("自动规则A公司");
+  await expect(refreshedRuleOne).not.toContainText("自动规则H公司");
+
+  const getRequestCount = await delayQingbiaoServerActions(page);
+  const calculateButton = page.getByTestId("qingbiao-calculate-button");
+  expect(await prisma.qingbiaoScenario.count({ where: { projectId } })).toBe(0);
+  await calculateButton.click();
+  await expect(calculateButton).toHaveText("清标测算中...");
+  await expect.poll(getRequestCount).toBe(1);
+  await expect.poll(() => browserDiagnosticEvents.length).toBe(1);
+  await expect(page.getByText("清标测算完成，共生成16套清标场景。"))
+    .toBeVisible();
+  await expect(calculateButton).toHaveText("清标测算");
+  await expect(page.getByRole("heading", { name: "清标测算表" }))
+    .toBeVisible();
+  await expect(page.getByRole("heading", { name: "清标测算结论" }))
+    .toBeVisible();
+  const entryGuarantee = page.getByTestId("qingbiao-entry-guarantee");
+  await expect(
+    entryGuarantee.getByRole("heading", {
+      name: "广田全场景入围保障测算",
+    }),
+  ).toBeVisible();
+  await expect(
+    entryGuarantee.getByTestId("qingbiao-entry-guarantee-table"),
+  ).toBeVisible();
+  await expect(
+    entryGuarantee
+      .getByTestId("qingbiao-entry-guarantee-table")
+      .locator("tbody tr"),
+  ).toHaveCount(16);
+  for (const ruleIndex of [1, 2, 3, 4]) {
+    const conclusion = page.getByTestId(
+      `qingbiao-conclusion-rule-${ruleIndex}`,
+    );
+    await expect(conclusion).toBeVisible();
+    await expect(conclusion.locator("li")).toHaveCount(4);
+    for (const qingbiaoK2Value of [0, 1, 2, 3]) {
+      await expect(
+        conclusion.getByTestId(
+          `qingbiao-conclusion-rule-${ruleIndex}-k2-${qingbiaoK2Value}`,
+        ),
+      ).toContainText(`K2=${qingbiaoK2Value}%`);
+    }
+  }
+  await expect(page.getByTestId("qingbiao-all-scenario-entrants"))
+    .toBeVisible();
+  await expect(page.getByTestId("qingbiao-conclusion-our-company").first())
+    .toHaveClass(/text-red-600/);
+  await expect(page.getByRole("tab")).toHaveCount(7);
+  await expect(
+    page.getByRole("tab", {
+      name: "推优单位随机剔除（1名最高报价投标人）",
+      selected: true,
+    }),
+  ).toBeVisible();
+  const wideTable = page.getByTestId("qingbiao-result-wide-table");
+  await expect(wideTable.locator("tbody tr")).toHaveCount(8);
+  await expect(
+    wideTable.locator("thead tr").first().getByRole("columnheader").allTextContents(),
+  ).resolves.toEqual([
+    "序号",
+    "单位名称",
+    "投标总价（万元）",
+    "净下浮率",
+    "商务优",
+    "技术优",
+    "总投标报价分值",
+    "履约加权平均分",
+    "履约得分",
+    "同类业绩",
+    "其他主客观分",
+    "平均值 K1",
+    "清标 K2 对应总分",
+    "假如抽中 0%",
+    "假如抽中 1%",
+    "假如抽中 2%",
+    "假如抽中 3%",
+  ]);
+  await expect(wideTable.getByRole("columnheader", { name: "清标 K2 对应总分" }))
+    .toBeVisible();
+  for (const qingbiaoK2Value of [0, 1, 2, 3]) {
+    await expect(
+      wideTable.getByRole("columnheader", {
+        name: `假如抽中 ${qingbiaoK2Value}%`,
+      }),
+    ).toBeVisible();
+  }
+  await expect(
+    wideTable.locator("thead tr").nth(1).getByRole("columnheader").allTextContents(),
+  ).resolves.toEqual([
+    "0%",
+    "1%",
+    "2%",
+    "3%",
+    ...Array.from({ length: 4 }, () => ["B值", "差值", "排序", "分数"]).flat(),
+  ]);
+  const scrollContainer = wideTable.locator("..");
+  await expect
+    .poll(() =>
+      scrollContainer.evaluate(
+        (element) => element.scrollWidth > element.clientWidth,
+      ),
+    )
+    .toBe(true);
+  await scrollContainer.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+  });
+  await expect.poll(() => scrollContainer.evaluate((element) => element.scrollLeft))
+    .toBeGreaterThan(0);
+  const ruleTabExpectations = [
+    {
+      name: "推优单位随机剔除（2名较高报价投标人）",
+      excluded: "自动规则A公司、自动规则H公司",
+    },
+    {
+      name: "推优单位随机剔除（1/3 较高报价投标人）",
+      excluded: "自动规则A公司、自动规则H公司、自动规则G公司",
+    },
+    {
+      name: "推优单位随机剔除（1/4 较高报价投标人）",
+      excluded: "自动规则A公司、自动规则H公司",
+    },
+  ] as const;
+  for (const expectation of ruleTabExpectations) {
+    await page.getByRole("tab", { name: expectation.name }).click();
+    const explanation = page.getByTestId("qingbiao-current-rule-explanation");
+    await expect(explanation).toContainText(expectation.name);
+    await expect(explanation).toContainText(expectation.excluded);
+  }
+  expect(await prisma.qingbiaoScenario.count({ where: { projectId } })).toBe(16);
+  expect(
+    await prisma.qingbiaoResult.count({ where: { scenario: { projectId } } }),
+  ).toBe(128);
+
+  await prisma.qingbiaoScenario.updateMany({
+    where: { projectId },
+    data: { version: 2, ruleVersion: QINGBIAO_20260820_RULE_VERSION },
+  });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "清标测算表" })).toHaveCount(0);
+  await expect(page.getByText("当前尚未生成清标结论，请先进行清标测算。"))
+    .toBeVisible();
+  await expect(page.getByTestId("qingbiao-conclusion-rule-1")).toHaveCount(0);
+
+  const recalculateButton = page.getByTestId("qingbiao-calculate-button");
+  await recalculateButton.click();
+  await expect(recalculateButton).toHaveText("清标测算中...");
+  await expect(page.getByText("清标测算完成，共生成16套清标场景。"))
+    .toBeVisible();
+  await expect(page.getByRole("heading", { name: "清标测算表" }))
+    .toBeVisible();
+  await expect(page.getByTestId("qingbiao-conclusion-rule-1")).toBeVisible();
+  expect(getRequestCount()).toBe(2);
+  expect(await prisma.qingbiaoScenario.count({ where: { projectId } })).toBe(16);
+  expect(
+    await prisma.qingbiaoResult.count({ where: { scenario: { projectId } } }),
+  ).toBe(128);
+  expect(
+    await prisma.qingbiaoScenario.count({
+      where: {
+        projectId,
+        version: 1,
+        ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
+      },
+    }),
+  ).toBe(16);
+});
+
+test.skip("旧履约明细五条件筛选（矩阵结构已正式替代）", async ({ page }) => {
   const companyName = golden.candidates[0].companyName;
   const totalRecordCount =
     golden.candidates.length * golden.performanceQuarters.length;
@@ -293,7 +695,7 @@ test("履约信息支持五条件组合、空结果和重置", async ({ page }) 
   await expect(page.getByText("69/144", { exact: true }).first()).toBeVisible();
 });
 
-test("季度履约评分一览展示真实归档状态并联动组合筛选", async ({ page }) => {
+test.skip("旧季度归档一览（矩阵结构已正式替代）", async ({ page }) => {
   const fixtureQuarters = [
     { year: 2025, quarter: 3, recordCount: 4, archived: true },
     { year: 2025, quarter: 4, recordCount: 7, archived: true },
@@ -662,163 +1064,83 @@ test("真实用户可从新建项目完成清标、定标和全场景分析", as
   await addCandidate(page, candidateInputs[5], 6);
 
   await page.goto(`/projects/${projectId}/qingbiao`);
-  await expect(page.getByText("有 6 家候选单位履约数据不完整，请先补充。"))
-    .toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "开始清标测算" }),
-  ).toBeDisabled();
+  await expect(page.getByText(/还有 \d+ 项信息需要完善/)).toBeVisible();
+  const blockedCalculateButton = page.getByTestId("qingbiao-calculate-button");
+  await expect(blockedCalculateButton).toBeEnabled();
+  await blockedCalculateButton.click();
+  const readinessDialog = page.getByRole("dialog", {
+    name: "暂不能进行清标测算",
+  });
+  await expect(readinessDialog).toContainText("单位履约加权分尚未保存");
+  await expect(readinessDialog).toContainText(candidateInputs[0].companyName);
+  await readinessDialog.getByRole("button", { name: "关闭" }).click();
 
   await page.goto(`/projects/${projectId}/performance`);
   for (const candidate of candidateInputs) {
     await addPerformance(page, candidate.companyName, candidate.performanceScore);
   }
-  let performanceRow = page
-    .getByRole("row")
-    .filter({ hasText: candidateInputs[0].companyName })
-    .filter({ hasText: "第一季度" });
-  await performanceRow
-    .getByRole("button", {
-      name: `操作 ${candidateInputs[0].companyName} 2026年第一季度`,
-    })
-    .click();
-  await page.getByRole("menuitem", { name: "编辑" }).click();
-  let performanceDialog = page.getByRole("dialog", { name: "编辑履约记录" });
-  const scopedProjectType = performanceDialog.getByRole("combobox", {
-    name: "项目类型",
-    exact: true,
-  });
-  await expect(scopedProjectType).toContainText("幕墙");
-  await scopedProjectType.click();
-  await expect(
-    page.getByRole("option", { name: "幕墙", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("option", { name: "装修", exact: true }),
-  ).toHaveCount(0);
-  await page.keyboard.press("Escape");
-  await performanceDialog.getByRole("button", { name: "取消" }).click();
-  await expect(performanceDialog).toBeHidden();
-  await page.reload();
-  await expect(
-    page
-      .getByRole("row")
-      .filter({ hasText: candidateInputs[0].companyName })
-      .filter({ hasText: "第一季度" }),
-  ).toContainText("幕墙");
-
-  await page.goto(
-    `/projects/${projectId}/performance?year=2026&quarter=1&company=${encodeURIComponent(candidateInputs[0].companyName)}`,
-  );
-  await expect(page.getByText("当前筛选共 1 条记录")).toBeVisible();
-  performanceRow = page
-    .getByRole("row")
-    .filter({ hasText: candidateInputs[0].companyName })
-    .filter({ hasText: "第一季度" });
-  await performanceRow
-    .getByRole("button", {
-      name: `操作 ${candidateInputs[0].companyName} 2026年第一季度`,
-    })
-    .click();
-  await page.getByRole("menuitem", { name: "编辑" }).click();
-  performanceDialog = page.getByRole("dialog", { name: "编辑履约记录" });
-  await performanceDialog.getByLabel("年份").fill("2025");
-  await performanceDialog.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(performanceDialog).toBeHidden();
-  await expect(page.getByText("当前筛选条件下暂无履约记录。")).toBeVisible();
-
-  await page.getByRole("button", { name: "重置筛选" }).click();
-  performanceRow = page
-    .getByRole("row")
-    .filter({ hasText: candidateInputs[0].companyName })
-    .filter({ hasText: "第一季度" });
-  await performanceRow
-    .getByRole("button", {
-      name: `操作 ${candidateInputs[0].companyName} 2025年第一季度`,
-    })
-    .click();
-  await page.getByRole("menuitem", { name: "编辑" }).click();
-  performanceDialog = page.getByRole("dialog", { name: "编辑履约记录" });
-  await performanceDialog.getByLabel("年份").fill("2026");
-  await performanceDialog.getByRole("button", { name: "保存", exact: true }).click();
-  await expect(performanceDialog).toBeHidden();
-  await expect(
-    page.getByRole("button", {
-      name: `操作 ${candidateInputs[0].companyName} 2026年第一季度`,
-    }),
-  ).toBeVisible();
-
   const weightedModule = page.getByTestId("performance-weighted-score");
-  await weightedModule.getByRole("button", { name: "从履约明细同步" }).click();
   await expect(weightedModule.getByText("已配置 6 行", { exact: false })).toBeVisible();
   await weightedModule.getByRole("button", { name: "保存", exact: true }).click();
   await expect(weightedModule.getByText("已保存 · 6 行", { exact: true })).toBeVisible();
 
   await page.goto(`/projects/${projectId}/qingbiao`);
-  const exclusions = [
+  await expect(page.getByRole("button", { name: "保存剔除配置" }))
+    .toHaveCount(0);
+  const expectedAutomaticExclusions = [
     [candidateInputs[5].companyName],
-    [candidateInputs[4].companyName, candidateInputs[5].companyName],
-    [candidateInputs[0].companyName],
-    [candidateInputs[0].companyName, candidateInputs[4].companyName],
+    [candidateInputs[5].companyName, candidateInputs[4].companyName],
+    [candidateInputs[5].companyName, candidateInputs[4].companyName],
+    [candidateInputs[5].companyName, candidateInputs[4].companyName],
   ] as const;
-  for (const [ruleOffset, companyNames] of exclusions.entries()) {
-    const ruleIndex = ruleOffset + 1;
+  for (const [offset, companyNames] of expectedAutomaticExclusions.entries()) {
+    const card = page.getByTestId(`automatic-exclusion-rule-${offset + 1}`);
+    await expect(card).toContainText(`自动剔除 ${companyNames.length} 家`);
     for (const companyName of companyNames) {
-      await page
-        .getByRole("checkbox", {
-          name: `${companyName}，规则${ruleIndex}剔除单位`,
-        })
-        .check();
+      await expect(card).toContainText(companyName);
     }
   }
-  await saveAllDirtyExclusionRules(page);
-  const editableExclusion = page.getByRole("checkbox", {
-    name: `${candidateInputs[5].companyName}，规则1剔除单位`,
-  });
-  await editableExclusion.uncheck();
-  await page.getByRole("button", { name: "保存剔除配置" }).click();
-  await page.reload();
-  await expect(editableExclusion).not.toBeChecked();
-  await editableExclusion.check();
-  await page.getByRole("button", { name: "保存剔除配置" }).click();
-  await page.reload();
-  await expect(editableExclusion).toBeChecked();
-  await expect(page.getByText("配置及履约数据完整，可以开始测算。"))
+  await expect(page.getByText("清标测算条件已满足"))
     .toBeVisible();
 
-  await page.getByRole("button", { name: "开始清标测算" }).click();
-  await expect(page.getByRole("heading", { name: "16场景总览" }))
+  await page.getByRole("button", { name: "清标测算", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "清标测算表" }))
     .toBeVisible();
-  const overviewRows = page.locator(
-    'section[aria-labelledby="qingbiao-overview-title"] tbody tr',
-  );
-  await expect(overviewRows).toHaveCount(16);
+  const resultTable = page.getByTestId("qingbiao-result-wide-table");
+  const resultRows = resultTable.locator("tbody tr");
+  await expect(resultRows).toHaveCount(6);
+  await expect(resultRows.first()).toContainText("10.67%");
+  await expect(resultRows.first()).toContainText("904.00 万元");
+  await page.getByRole("tab", {
+    name: "推优单位随机剔除（1/3 较高报价投标人）",
+  }).click();
+  await expect(page.getByTestId("qingbiao-current-rule-explanation"))
+    .toContainText(candidateInputs[5].companyName);
+  await expect(resultRows.first()).toContainText("9.50%");
+  await expect(resultRows.first()).toContainText("896.50 万元");
 
-  const rule1K20Cells = overviewRows.nth(0).getByRole("cell");
-  await expect(rule1K20Cells.nth(0)).toHaveText("规则1");
-  await expect(rule1K20Cells.nth(1)).toHaveText("0.00%");
-  await expect(rule1K20Cells.nth(2)).toHaveText("10.67%");
-  await expect(rule1K20Cells.nth(3)).toHaveText("904.00 万元");
-  for (const [offset, expectedName] of [
-    candidateInputs[2].companyName,
-    candidateInputs[3].companyName,
-    candidateInputs[4].companyName,
-    candidateInputs[1].companyName,
+  await page.goto(`/projects/${projectId}/candidates`);
+  editableRow = candidateRow(page, candidateInputs[0].companyName);
+  await editableRow.getByLabel(/投标总价$/).fill("940");
+  await waitForCandidateSave(page, candidateInputs[0].companyName);
+  await page.goto(`/projects/${projectId}/qingbiao`);
+  await expect(
+    page.getByText(
+      "候选报价、项目参数或候选单位已修改，以下结果已过期，请重新进行清标测算。",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText("当前清标结果已过期，请重新进行清标测算后查看结论。"),
+  ).toBeVisible();
+  await expect(page.getByTestId("qingbiao-conclusion-rule-1")).toHaveCount(0);
+  const refreshedRuleOne = page.getByTestId("automatic-exclusion-rule-1");
+  await expect(refreshedRuleOne).toContainText(candidateInputs[0].companyName);
+  await expect(refreshedRuleOne).not.toContainText(
     candidateInputs[5].companyName,
-  ].entries()) {
-    await expect(rule1K20Cells.nth(4 + offset)).toHaveText(expectedName);
-  }
-
-  const rule3K22Cells = overviewRows.nth(10).getByRole("cell");
-  await expect(rule3K22Cells.nth(0)).toHaveText("规则3");
-  await expect(rule3K22Cells.nth(1)).toHaveText("2.00%");
-  await expect(rule3K22Cells.nth(2)).toHaveText("11.50%");
-  await expect(rule3K22Cells.nth(3)).toHaveText("878.50 万元");
-  for (const [offset, expectedName] of candidateInputs
-    .slice(0, 5)
-    .map(({ companyName }) => companyName)
-    .entries()) {
-    await expect(rule3K22Cells.nth(4 + offset)).toHaveText(expectedName);
-  }
+  );
+  await page.getByRole("button", { name: "清标测算", exact: true }).click();
+  await expect(resultRows).toHaveCount(6);
+  await expect(page.getByTestId("qingbiao-conclusion-rule-1")).toBeVisible();
 
   await page.goto(`/projects/${projectId}/settings`);
   await expect(decorationType).toBeDisabled();
@@ -829,7 +1151,20 @@ test("真实用户可从新建项目完成清标、定标和全场景分析", as
   await decorationType.check();
   await page.getByRole("button", { name: "保存修改" }).click();
   await page.goto(`/projects/${projectId}/qingbiao`);
-  await expect(page.getByText(/结果已过期，请重新进行清标测算/)).toBeVisible();
+  await expect(
+    page.getByText(
+      "候选报价、项目参数或候选单位已修改，以下结果已过期，请重新进行清标测算。",
+    ),
+  ).toBeVisible();
+  await expect(page.getByTestId("qingbiao-weighted-performance-warning"))
+    .toContainText("单位履约加权分已过期");
+  await expect(
+    page
+      .getByTestId("qingbiao-result-wide-table")
+      .locator("tbody")
+      .getByText("—", { exact: true })
+      .first(),
+  ).toBeVisible();
   await page.goto(`/projects/${projectId}/settings`);
   await page.getByRole("button", { name: "修改项目类型" }).click();
   projectTypeDialog = page.getByRole("dialog", { name: "修改项目类型" });
@@ -837,22 +1172,32 @@ test("真实用户可从新建项目完成清标、定标和全场景分析", as
   await decorationType.uncheck();
   await page.getByRole("button", { name: "保存修改" }).click();
   await page.goto(`/projects/${projectId}/performance`);
-  await expect(weightedModule.getByText("已过期 · 请重新同步并保存", { exact: true })).toBeVisible();
+  await expect(weightedModule.getByText("已过期 · 请核对并保存", { exact: true })).toBeVisible();
   await weightedModule.getByRole("button", { name: "保存", exact: true }).click();
   await expect(weightedModule.getByText("已保存 · 6 行", { exact: true })).toBeVisible();
   await page.goto(`/projects/${projectId}/qingbiao`);
-  await expect(page.getByText(/结果已过期，请重新进行清标测算/)).toBeVisible();
-  await page.getByRole("button", { name: "开始清标测算" }).click();
-  await expect(overviewRows).toHaveCount(16);
+  await expect(
+    page.getByText(
+      "候选报价、项目参数或候选单位已修改，以下结果已过期，请重新进行清标测算。",
+    ),
+  ).toBeVisible();
+  await expect(page.getByTestId("qingbiao-weighted-performance-warning"))
+    .toHaveCount(0);
+  await page.getByRole("button", { name: "清标测算", exact: true }).click();
+  await expect(resultRows).toHaveCount(6);
 
   await page.goto(`/projects/${projectId}/candidates`);
   editableRow = candidateRow(page, candidateInputs[5].companyName);
   await editableRow.getByLabel(/其他主客观分$/).fill("2.3");
   await waitForCandidateSave(page, candidateInputs[5].companyName);
   await page.goto(`/projects/${projectId}/qingbiao`);
-  await expect(page.getByText(/结果已过期，请重新进行清标测算/)).toBeVisible();
-  await page.getByRole("button", { name: "开始清标测算" }).click();
-  await expect(overviewRows).toHaveCount(16);
+  await expect(
+    page.getByText(
+      "候选报价、项目参数或候选单位已修改，以下结果已过期，请重新进行清标测算。",
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "清标测算", exact: true }).click();
+  await expect(resultRows).toHaveCount(6);
 
   await page.goto(`/projects/${projectId}/dingbiao`);
   await page.getByLabel("选择清标来源场景").click();

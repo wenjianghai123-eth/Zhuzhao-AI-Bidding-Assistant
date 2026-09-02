@@ -3,42 +3,45 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import {
-  getQingbiaoActionValidationMessages,
-  qingbiaoExclusionRuleActionSchema,
-} from "@/features/qingbiao/qingbiao-action-schema";
-import {
-  calculateAllRuntimeQingbiaoScenarios,
-  saveRuntimeQingbiaoExclusionRule,
-} from "@/server/application/qingbiao-runtime-service";
+import { calculateAllRuntimeQingbiaoScenarios } from "@/server/application/qingbiao-runtime-service";
 import type { CalculateAllQingbiaoScenariosResult } from "@/server/application/qingbiao-service";
+import type { QingbiaoReadinessIssue } from "@/server/application/qingbiao-readiness-service";
 import type { SavedQingbiaoCalculationSnapshot } from "@/server/repositories/qingbiao-repository";
 
 export type QingbiaoActionResult =
   | {
       status: "success";
+      code: "QINGBIAO_CALCULATED";
       message: string;
+      scenarioCount: number;
       calculation: SavedQingbiaoCalculationSnapshot;
     }
-  | { status: "invalid"; message: string; issues: readonly string[] }
-  | { status: "not_found"; message: string }
-  | { status: "conflict"; message: string }
-  | { status: "failure"; message: string };
-
-export type SaveQingbiaoExclusionRuleActionResult =
   | {
-      status: "success";
+      status: "invalid";
+      code: "QINGBIAO_PREFLIGHT_FAILED" | "QINGBIAO_VALIDATION_FAILED";
       message: string;
-      exclusionRuleId: string;
-      candidateIds: readonly string[];
-      inputRevision: number;
-      changed: boolean;
+      issues: readonly string[];
+      readinessIssues: readonly QingbiaoReadinessIssue[];
     }
-  | { status: "invalid"; message: string; issues: readonly string[] }
-  | { status: "not_found"; message: string }
-  | { status: "failure"; message: string };
+  | { status: "not_found"; code: "QINGBIAO_PROJECT_NOT_FOUND"; message: string }
+  | { status: "conflict"; code: "QINGBIAO_INPUT_REVISION_CONFLICT"; message: string }
+  | { status: "failure"; code: "QINGBIAO_PERSISTENCE_FAILED" | "QINGBIAO_UNEXPECTED_FAILURE"; message: string };
 
 const projectIdSchema = z.string().trim().min(1);
+
+type QingbiaoActionDiagnosticEvent =
+  | "QINGBIAO_ACTION_START"
+  | "QINGBIAO_SERVICE_START"
+  | "QINGBIAO_SERVICE_COMPLETE";
+
+function logQingbiaoActionDiagnostic(
+  event: QingbiaoActionDiagnosticEvent,
+  details: Readonly<Record<string, string | number | boolean>>,
+) {
+  if (process.env.NODE_ENV === "development") {
+    console.info(JSON.stringify({ event, ...details }));
+  }
+}
 
 function revalidateQingbiaoPaths(projectId: string) {
   revalidatePath(`/projects/${projectId}`);
@@ -52,110 +55,90 @@ function mapCalculationResult(
     case "calculated":
       return {
         status: "success",
-        message: "16套清标场景测算并保存成功",
+        code: "QINGBIAO_CALCULATED",
+        message: "清标测算完成，共生成16套清标场景。",
+        scenarioCount: result.calculation.scenarios.length,
         calculation: result.calculation,
       };
     case "project_not_found":
-      return { status: "not_found", message: "当前项目不存在" };
+      return {
+        status: "not_found",
+        code: "QINGBIAO_PROJECT_NOT_FOUND",
+        message: "当前项目不存在。",
+      };
     case "input_revision_conflict":
       return {
         status: "conflict",
+        code: "QINGBIAO_INPUT_REVISION_CONFLICT",
         message: "项目配置已发生变化，请刷新页面后重新测算",
       };
     case "validation_error":
       return {
         status: "invalid",
-        message: "清标测算未通过业务校验",
+        code:
+          result.readinessIssues && result.readinessIssues.length > 0
+            ? "QINGBIAO_PREFLIGHT_FAILED"
+            : "QINGBIAO_VALIDATION_FAILED",
+        message: result.issues[0] ?? "清标测算未通过业务校验。",
         issues: result.issues,
+        readinessIssues: result.readinessIssues ?? [],
       };
     case "persistence_error":
-      return { status: "failure", message: "清标结果保存失败，请稍后重试" };
+      return {
+        status: "failure",
+        code: "QINGBIAO_PERSISTENCE_FAILED",
+        message: "清标测算失败：结果未能保存，请稍后重试。",
+      };
   }
 }
 
 export async function calculateQingbiaoAction(
   projectId: string,
 ): Promise<QingbiaoActionResult> {
+  logQingbiaoActionDiagnostic("QINGBIAO_ACTION_START", {
+    projectId,
+  });
   const projectIdValidation = projectIdSchema.safeParse(projectId);
   if (!projectIdValidation.success) {
-    return { status: "not_found", message: "未找到当前项目" };
-  }
-
-  try {
-    const actionResult = mapCalculationResult(
-      await calculateAllRuntimeQingbiaoScenarios(projectIdValidation.data),
-    );
-    if (actionResult.status === "success") {
-      revalidateQingbiaoPaths(projectIdValidation.data);
-    }
-    return actionResult;
-  } catch {
-    return { status: "failure", message: "清标测算失败，请稍后重试" };
-  }
-}
-
-export async function saveQingbiaoExclusionRuleAction(
-  projectId: string,
-  input: unknown,
-): Promise<SaveQingbiaoExclusionRuleActionResult> {
-  const projectIdValidation = projectIdSchema.safeParse(projectId);
-  if (!projectIdValidation.success) {
-    return { status: "not_found", message: "未找到当前项目" };
-  }
-  const validation = qingbiaoExclusionRuleActionSchema.safeParse(input);
-  if (!validation.success) {
     return {
-      status: "invalid",
-      message: "推优规则配置未通过校验",
-      issues: getQingbiaoActionValidationMessages(validation.error),
+      status: "not_found",
+      code: "QINGBIAO_PROJECT_NOT_FOUND",
+      message: "未找到当前项目。",
     };
   }
 
   try {
-    const result = await saveRuntimeQingbiaoExclusionRule(
+    logQingbiaoActionDiagnostic("QINGBIAO_SERVICE_START", {
+      projectId: projectIdValidation.data,
+    });
+    const calculationResult = await calculateAllRuntimeQingbiaoScenarios(
       projectIdValidation.data,
-      validation.data.exclusionRuleId,
-      validation.data.candidateIds,
     );
-    switch (result.status) {
-      case "saved":
-      case "unchanged":
-        revalidateQingbiaoPaths(projectIdValidation.data);
-        return {
-          status: "success",
-          message:
-            result.status === "saved"
-              ? "推优规则已保存，请重新进行清标测算"
-              : "推优规则配置未发生变化",
-          exclusionRuleId: validation.data.exclusionRuleId,
-          candidateIds: validation.data.candidateIds,
-          inputRevision: result.inputRevision,
-          changed: result.status === "saved",
-        };
-      case "project_or_rule_not_found":
-        return { status: "not_found", message: "当前项目或推优规则不存在" };
-      case "all_candidates_excluded":
-        return {
-          status: "invalid",
-          message: "推优规则配置未保存",
-          issues: [
-            "当前推优规则已剔除全部候选单位，无法计算清标 K1。",
-          ],
-        };
-      case "invalid_candidates":
-        return {
-          status: "invalid",
-          message: "推优规则配置未保存",
-          issues: ["被剔除单位必须属于当前项目。"],
-        };
-      case "duplicate_candidate":
-        return {
-          status: "invalid",
-          message: "推优规则配置未保存",
-          issues: ["同一候选单位不能重复剔除。"],
-        };
+    const actionResult = mapCalculationResult(calculationResult);
+    logQingbiaoActionDiagnostic("QINGBIAO_SERVICE_COMPLETE", {
+      projectId: projectIdValidation.data,
+      status: actionResult.status,
+      scenarioCount:
+        actionResult.status === "success" ? actionResult.scenarioCount : 0,
+    });
+    if (actionResult.status === "success") {
+      revalidateQingbiaoPaths(projectIdValidation.data);
     }
-  } catch {
-    return { status: "failure", message: "推优规则保存失败，请稍后重试" };
+    return actionResult;
+  } catch (error: unknown) {
+    if (process.env.NODE_ENV === "development") {
+      console.error(
+        JSON.stringify({
+          event: "QINGBIAO_ACTION_FAILURE",
+          code: "QINGBIAO_UNEXPECTED_FAILURE",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        }),
+      );
+    }
+    return {
+      status: "failure",
+      code: "QINGBIAO_UNEXPECTED_FAILURE",
+      message: "清标测算失败：系统暂时无法完成请求，请稍后重试。",
+    };
   }
 }

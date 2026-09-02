@@ -11,6 +11,15 @@ const quarterRefSchema = z.object({
   quarter: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
 });
 
+const canonicalScoreSchema = z
+  .string()
+  .trim()
+  .regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/, "季度分数必须为非负十进制数");
+
+const quarterValueSchema = quarterRefSchema.extend({
+  score: canonicalScoreSchema.nullable(),
+});
+
 export const performanceWeightedSaveSchema = z.object({
   expectedInputRevision: z.number().int().positive(),
   start: quarterRefSchema,
@@ -21,6 +30,7 @@ export const performanceWeightedSaveSchema = z.object({
       candidateId: z.string().trim().min(1),
       projectType: z.enum(PROJECT_TYPE_VALUES),
       classificationLevel: z.string().trim().max(100),
+      quarterValues: z.array(quarterValueSchema),
     }),
   ),
 });

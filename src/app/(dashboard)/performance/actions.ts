@@ -200,7 +200,10 @@ export async function savePerformanceWeightedScoresAction(
   }
   const validation = performanceWeightedSaveSchema.safeParse(input);
   if (!validation.success) {
-    return { status: "invalid", message: "请检查单位履约加权分设置" };
+    return {
+      status: "invalid",
+      message: "单位履约加权分数据格式不正确，请检查季度分数、年份和项目类型。",
+    };
   }
 
   try {
@@ -211,13 +214,13 @@ export async function savePerformanceWeightedScoresAction(
     if (result.status === "revision_conflict") {
       return {
         status: "conflict",
-        message: "履约明细已发生变化，请刷新后重新核对并保存",
+        message: "履约数据已被其他操作更新，请刷新页面后重新核对并保存。",
       };
     }
     if (result.status === "invalid_scope") {
       return {
         status: "invalid",
-        message: "单位、项目类型或季度范围不属于当前项目",
+        message: "候选单位、项目类型、年份范围或季度分数不属于当前项目的有效范围。",
       };
     }
     if (result.status === "unchanged") {
@@ -232,9 +235,12 @@ export async function savePerformanceWeightedScoresAction(
     return {
       status: "success",
       savedAt: result.savedAt,
-      message: "单位履约加权分已保存",
+      message: `单位履约加权分已保存，共保存 ${validation.data.rows.length} 行。`,
     };
   } catch {
-    return { status: "failure", message: "保存单位履约加权分失败，请稍后重试" };
+    return {
+      status: "failure",
+      message: "保存单位履约加权分失败，当前输入未提交，请稍后重试。",
+    };
   }
 }

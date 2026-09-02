@@ -1,142 +1,133 @@
-# 新版清标 Web 流程
+# 清标 Web 流程
 
-本文档记录 2026-08-24 Step 5 实际上线的新版清标 Application / Repository / UI 契约。路由继续为 `/projects/[id]/qingbiao`。
+本文档记录 2026-08-28 起生效的清标 Application / Repository / UI 契约。路由为 `/projects/[id]/qingbiao`，正式规则版本为 `qingbiao-20260828-auto-high-bid-v3`。
 
 ## 1. 用户流程
 
 ```mermaid
 flowchart TD
-    A[打开项目清标页] --> B[加载或幂等补齐4条推优规则]
-    B --> C[分别勾选每条规则的剔除候选单位]
-    C --> D[按规则保存 candidateId 关联]
-    D --> E{测算前置条件完整?}
-    E -- 否 --> F[显示中文结构化问题]
-    E -- 是 --> G[点击开始清标测算]
-    G --> H[Application加载项目参数/候选/履约/4条规则]
-    H --> I[4 rules × 4 K2]
-    I --> J[calculateQingbiaoScenarioV2 × 16]
-    J --> K{16套全部成功?}
-    K -- 否 --> F
-    K -- 是 --> L[单事务 upsert 16 Scenario 并替换 Result]
-    L --> M[16组完整排名和有序Top5]
-    M --> N[规则 Tabs]
-    N --> O[K2 Tabs]
-    O --> P[单场景指标/Top5/明细]
-    M --> Q[16行全场景目录]
+    A[打开项目清标页] --> B[加载或幂等补齐4条规则身份]
+    B --> C[读取全部有效候选及投标总价]
+    C --> D[Domain按报价降序自动生成4套剔除结果]
+    D --> E[页面展示4张只读规则Card]
+    E --> F[点击清标测算]
+    F --> G{Application Preflight ready?}
+    G -- 否 --> H[一次展示全部结构化阻塞项和补充入口]
+    G -- 是 --> I[执行正式清标并再次校验]
+    I --> J[4 rules × 4 K2]
+    J --> K[calculateQingbiaoScenarioV2 × 16]
+    K --> L[事务内按最新报价复核规则]
+    L --> M[保存剔除审计快照并替换16套结果]
+    M --> N[刷新清标测算分组宽表与结论]
 ```
 
-## 2. 推优剔除规则配置
+用户只维护候选单位及其投标总价，不生成、确认或保存推优剔除规则，也不能提交 `excludedCandidateIds`。
 
-页面展示“规则1”至“规则4”四张 Card，不创造 Excel 未签署的业务名称。每张 Card 的候选项来自当前 `ProjectCandidate`，展示单位名称、投标报价、净下浮率与我方标记。
+## 2. 自动推优剔除
 
-净下浮率遵守 fraction contract：数据库/Domain 的 `0.1038` 由 UI 显示为 `10.38%`。
+唯一规则入口是 Domain 纯函数 `calculateAutomaticExclusionRules(candidates)`。它使用 Decimal 比较报价，按 `bidPrice DESC, candidateId ASC` 排序，并返回每条规则的候选总数、剔除数量和候选 ID。完整公式见 [qingbiao-exclusion-rules.md](./qingbiao-exclusion-rules.md)。
 
-保存输入只包含：
+页面只读展示：
 
-```text
-projectId
-exclusionRuleId
-candidateIds[]
-```
+- 规则1：最高报价 1 家；
+- 规则2：最高报价前 2 家；
+- 规则3：`max(1, ROUND_HALF_UP(n / 3))` 家；
+- 规则4：`max(1, ROUND_HALF_UP(n / 4))` 家。
 
-Repository 在事务内校验规则属于项目、候选 ID 属于同一项目、ID 不重复且不能剔除全部候选；然后删除该规则旧关联并创建新关联。该操作的删除始终以 `exclusionRuleId` 为范围。允许保存 0 个剔除单位，此时 K1 使用全部候选。
+“随机剔除”仅是沿用业务文案，不使用随机数、shuffle 或抽样。
 
-## 3. 测算前置条件
+## 3. Qingbiao Preflight / Readiness
 
-“开始清标测算”只在以下条件满足时可用：
+按钮仅在请求执行期间禁用。即使前置条件不满足，用户仍可点击“清标测算”；Application 的 `getQingbiaoReadiness(projectId)` 会一次收集全部可确定问题，返回 `code / category / title / message / actionLabel / actionHref`，页面打开“暂不能进行清标测算”Dialog。阻塞项可直接跳转参数设置、候选单位或履约信息。
 
-- 项目参数存在；
-- 至少有 1 个候选单位；
-- 4 条 exclusion rule 均存在；
-- 没有尚未保存的规则草稿；
-- 每条规则剔除后至少剩 1 个 K1 候选；
-- 所有排名候选按项目类型需要的履约数据完整。
+Readiness 与正式计算共同覆盖：
 
-前端禁用按钮只是交互优化；Application/Domain/Repository 仍会重新校验，不信任浏览器状态。
+- 项目存在、项目类型和价格范围有效；
+- 总投标报价分值、排名递减扣分值有效；
+- 候选单位存在，单位名称、投标总价、净下浮率及分值有效；
+- 4 套自动剔除结果均有效；
+- 每条规则执行后至少剩 1 个 K1 候选；
+- 按当前 `projectId + candidateId + projectType` 检查履约明细；
+- 单位履约加权分快照已保存、未 stale，且每个候选/项目类型有有效加权值。
+
+候选不足时 Domain/Application 返回 `QINGBIAO_INSUFFICIENT_CANDIDATES_FOR_EXCLUSION` 对应的中文问题。例如两家候选执行规则2时，不会把剔除数量静默缩减为 1。
+
+UI 不再自行拼接另一套 `canCalculate` 规则，也不存在 `if (!canCalculate) return`。点击 handler 先显式设置 `isPending=true`，再调用当前计算 Action；计算 Action 返回明确的成功或失败 code/message。无论成功、业务校验失败还是异常，`finally` 都释放防重复锁并恢复按钮。成功后执行 `router.refresh()` 并提示“清标测算完成，共生成16套清标场景。”。
+
+开发环境额外记录 `QINGBIAO_CLICK`、`QINGBIAO_ACTION_START`、`QINGBIAO_SERVICE_START` 与 `QINGBIAO_SERVICE_COMPLETE`，仅含项目标识、状态和场景数。工作站通过 `192.168.114.168` 访问本地开发服务时，该精确主机仅在 `NODE_ENV=development` 下列入 Next.js `allowedDevOrigins`；生产构建不注入该配置，也未允许通配 Origin/Host。否则开发服务器会返回服务端 HTML、却阻止客户端 chunks，导致 React 未 hydration，按钮呈现为可点击但没有任何事件。
+
+`pnpm test:e2e:lan:smoke` 会完整重启绑定 `0.0.0.0:3000` 的隔离开发服务，并从 `http://192.168.114.168:3000` 验证 hydration、点击 trace、Server Action POST、loading、成功提示、清标表与清标结论。`pnpm test:e2e:lan` 在同一 LAN Origin 下执行完整浏览器套件，覆盖参数、候选、履约、清标、定标、分析与导出等关键 Client Components。
 
 ## 4. Application 与 Domain 契约
 
-`calculateAllQingbiaoScenarios(projectId)` 是批量清标用例入口。Application 不重写 K1、B、得分或排名公式，而是针对每个 `ruleIndex=1..4` 与 `qingbiaoK2Value=0..3` 调用 Step 4 的 `calculateQingbiaoScenarioV2()`。
-
-当前显式策略为：
+`calculateAllQingbiaoScenarios(projectId)` 先按最新候选报价取得自动剔除结果，再针对每个 `ruleIndex=1..4` 与 `qingbiaoK2Value=0..3` 调用 `calculateQingbiaoScenarioV2()`。
 
 ```text
-K1 candidates = all candidates - current rule excluded candidates
+K1 candidates = NON_EXCLUDED_CANDIDATES
 Ranking candidates = ALL_CANDIDATES
 ```
 
-因此被剔除单位不进入该规则 K1 样本，但仍会出现在该场景报价排名、综合评分、最终排名和可能的 Top5 中。这是当前对 Excel 结构的临时解释，尚待业务签署。
+自动剔除单位不进入该规则 K1 样本，但仍参与报价排名、综合评分、最终排名和 Top5。K1 继续执行既有“fraction × 100 → HALF_UP 整数百分点 → unique → average → ÷ 100”逻辑；B、Price Score、定标 M 和 Analysis 公式均未因本次规则修正而改变。
 
-履约继续按“候选单位名称 + 项目类型 + 最近 12 季度”查询。多专业先分别平均，再对专业平均值等权平均。缺失不默认为 0，而是阻止整批计算。
+## 5. 事务、审计快照与重算
 
-## 5. 事务与重算
+`saveCalculationV2()` 在同一事务内：
 
-`saveCalculationV2()` 先在事务中重读项目修订、候选和规则关系，并验证整批 16 场景。验证通过后：
+1. 重读项目修订、候选 ID 和 Decimal 报价；
+2. 重新运行自动剔除 Domain 规则，拒绝客户端或并发产生的不一致集合；
+3. 将 `QingbiaoExclusionRuleCandidate` 替换为本批测算的系统判定审计快照；
+4. 按 `(exclusionRuleId, qingbiaoK2)` upsert 16 个场景；
+5. 替换每个场景的全部 `QingbiaoResult`；
+6. 保存相同的 `inputRevision` 和 `qingbiao-20260828-auto-high-bid-v3`。
 
-1. 按 `(exclusionRuleId, qingbiaoK2)` upsert 场景；
-2. 按该 `scenarioId` 删除旧 `QingbiaoResult`；
-3. 写入该场景所有排名候选的新结果；
-4. 16 场景全部成功后才 commit；
-5. 任一关键校验、修订冲突或写入失败则 rollback。
+`QingbiaoExclusionRuleCandidate` 不再表示用户配置，且没有公开 Action/Repository 写入口供 UI 修改。重算复用稳定场景身份，并更新规则审计快照。
 
-重算不会创建第 17 个场景；原场景 ID 保持稳定，原结果被完整替换。删除始终按具体场景限定，不存在无项目/场景范围的 `deleteMany({})`。
+旧规则版本（例如 `qingbiao-20260820-v2`）的16条记录不会被伪装成当前结果；页面状态为 `not_calculated`。用户点击“清标测算”后，事务按稳定场景唯一键原位更新为当前规则版本、替换审计快照和结果，不新增为32条。
 
-## 6. 结果页结构
+## 6. stale / revision
 
-结果页按两级导航展示：
+投标总价是自动剔除规则的正式输入。候选新增、删除或任一候选字段（包括 `bidPrice`）实际变化时，现有候选仓储会递增 `qingbiaoInputRevision` 与 `dingbiaoInputRevision`：
+
+- 旧清标结果变为 `stale`；
+- 依赖旧清标来源的定标和 Analysis 不再视为 current；
+- 再次进入清标页时，4 张只读 Card 已按最新报价重新派生；
+- 重新测算后仍生成 16 套场景。
+
+结果状态：
+
+- `not_calculated`：没有完整的 16 条当前规则版本场景；
+- `current`：16 条结果修订与项目当前输入修订一致；
+- `stale`：存在历史结果，但输入修订已变化。
+
+开发环境按阶段输出结构化事件：`QINGBIAO_START`、`QINGBIAO_PREFLIGHT_PASS`、4条 `QINGBIAO_RULE_n_GENERATED`、16次 `QINGBIAO_SCENARIO_CALCULATED`、`QINGBIAO_PERSIST_START`、`QINGBIAO_PERSIST_COMPLETE`、`QINGBIAO_DONE`。日志只包含项目标识、数量、规则索引和K2，不输出单位名称、报价或履约分。`pnpm diagnose:qingbiao` 可只读检查本地项目的 readiness、版本、场景/结果数量与ViewModel读取状态。
+
+## 7. 结果宽表与场景目录
+
+结果区域使用“清标测算表”只读 ViewModel，一次读取16套场景，不在 React 中重新计算 K1、B、差值、排序或分数。顶部含规则说明入口和4个规则 pill；规则切换联动自动剔除说明、当前 K1、4个K2综合得分及4组场景明细。
+
+宽表使用两级表头：左侧基础字段、`清标 K2 对应总分(0/1/2/3%)`，以及4组`假如抽中 X%`，每组读取已保存的 `B值 / 差值 / 排序 / 分数`。外层支持横向滚动，序号、单位、投标总价和净下浮率为 sticky 列。履约加权分快照缺失或 stale 时显示红色告警，当前履约值显示“—”，避免把旧快照当成 current。
+
+宽表下方的“清标测算结论”使用独立只读 ViewModel，按规则1至4、每条规则 K2=0/1/2/3 的固定顺序直接映射16个场景的已保存 `Top5`，不在 React 中按分数重排。候选不足5家时展示实际数量；我方单位使用红色加粗。底部“全场景入围单位”按同一遍历顺序以 `candidateId` 首次出现去重。`not_calculated` 显示空状态；`stale` 只显示过期提示，不渲染旧结论。
+
+每个持久化目录项继续保留：
 
 ```text
-规则1
-  -> K2=0% / 1% / 2% / 3%
-规则2
-  -> K2=0% / 1% / 2% / 3%
-规则3
-  -> K2=0% / 1% / 2% / 3%
-规则4
-  -> K2=0% / 1% / 2% / 3%
+scenarioId + exclusionRuleId + ruleIndex + qingbiaoK2Value
++ qingbiaoK1Fraction + referencePriceB + ordered Top5
 ```
 
-同一规则顶部只展示一个规则 K1。单场景展示规则、K1、K2、参考报价 B、候选数、我方排名/是否 Top5、有序 Top5 和全部计算明细。商标优与技术优可查看，但明确标记不计入综合分。
+全场景入围单位不是公司名称并集；同一候选出现在多个场景时，必须保留每个场景独立的来源身份与 `finalRank`。
 
-我方单位只依据 `isOurCompany`用 Badge 和行底色强调，不硬编码任何公司名。未设置我方单位时显示“未设置我方单位”，不报错。
+## 8. 广田全场景入围保障测算
 
-## 7. 全场景目录 API
+清标测算结论下方增加独立只读模块。它仅在存在唯一我方单位、16套 current Qingbiao 场景、完整候选评分、current 履约加权分快照和4条自动推优规则时输出结果；缺失我方、未清标、stale、履约不可用或计算失败均显示明确中文状态。
 
-`getQingbiaoScenarioCatalog(projectId)` 返回：
+Application 只负责前置条件和 ViewModel 编排，实际反向扫描位于 `src/domain/qingbiao-reverse-simulation`。扫描时固定所有竞争对手输入以及我方履约、同类业绩、其他主客观分、商务优和技术优，仅改变我方净下浮率与按正式关系换算的投标总价。每个采样点重新生成自动剔除集合并调用正式 Qingbiao V2 计算16次，同时收集 TOP5 与 TOP3 可行区间。
 
-```ts
-type ScenarioCatalog = {
-  inputRevision: number;
-  ruleVersion: string;
-  scenarios: Array<{
-    scenarioId: string;
-    exclusionRuleId: string;
-    ruleIndex: 1 | 2 | 3 | 4;
-    qingbiaoK2Value: 0 | 1 | 2 | 3;
-    qingbiaoK1Fraction: string;
-    referencePriceB: string;
-    top5: Array<{
-      candidateId: string;
-      companyName: string;
-      finalRank: number;
-      isOurCompany: boolean;
-    }>;
-  }>;
-};
-```
+页面以4条规则、每条4个K2的16行表格展示各场景区间；底部显示16个场景可行区间的交集。多段可行解分别展示，无交集时不生成假区间。该结果不写入 Qingbiao、Dingbiao 或 Analysis 表，也不改变任何 Golden expected。
 
-“全场景入围单位”即这 16 套带 `scenarioId` 和 `finalRank` 的有序 Top5。它不是公司名称并集，同一单位出现在多个场景时必须保留每个场景的独立身份和排名。
+## 9. Golden 基线
 
-## 8. 结果状态与兼容
-
-- `not_calculated`：没有完整的 16 条 `qingbiao-20260820-v2` 场景；历史项目会显示空状态，不崩溃。
-- `current`：16 条结果修订与项目当前 `qingbiaoInputRevision` 一致。
-- `stale`：已保存结果存在，但项目输入修订已变化。页面可供对照查看，但显示明确过期警告。
-
-规则、项目参数和候选变更已接入修订失效。公共履约数据变更尚未能反向递增所有受影响项目修订，是当前已知限制。
-
-底层继续保留旧字段与 legacy 路径。规则 1 的四个新场景暂时标记 `isLegacy=true` 以支持未修改的定标和 analysis；新版清标查询与 UI 不依赖该标志。
-
-## 9. 本步骤未改动范围
-
-本步骤未修改 Prisma schema/migration、Step 4 V2 Domain 核心与 Golden fixture、定标 Domain/UI、`calculateFinalBenchmarkPrice()`、analysis 或 report，也未批量生成 144 套定标结果。
+- `Golden Case 20260820-A` 保留为旧人工剔除业务的历史 fixture，并由 legacy 测试保护；
+- `Golden Case 20260828-B` 是当前 release business baseline；
+- 新基线固定自动报价顺序、4 套剔除结果、4 个 K1、16 个 B/Top5、144 个定标结果与 Analysis。

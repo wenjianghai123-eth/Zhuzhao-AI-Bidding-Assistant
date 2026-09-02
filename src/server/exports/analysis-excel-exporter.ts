@@ -256,7 +256,7 @@ function addQingbiaoDetails(workbook: ExcelJS.Workbook, data: AnalysisDeliveryDa
   const { nameById, ruleByIndex } = qingbiaoContext(data);
   data.qingbiao.scenarios.forEach((scenario) => {
     const rule = ruleByIndex.get(scenario.ruleIndex);
-    const excludedNames = rule?.excludedCandidateIds
+    const excludedNames = rule?.auditSnapshotCandidateIds
       .map((candidateId) => nameById.get(candidateId) ?? candidateId)
       .join("、") ?? "";
     scenario.orderedResults.forEach((candidate) =>

@@ -49,7 +49,7 @@
 | --- | --- | --- |
 | 单位、项目类型、季度、等级、得分录入 | AUTOMATED PASS | 浏览器为 6 家单位录入幕墙、2026Q1、A 和评分，并核对列表。 |
 | 最近 12 季度读取 | AUTOMATED PASS | Golden E2E 装载每家 12 个季度；Excel 导出重新打开后核对履约 Sheet。 |
-| 履约缺失阻断清标 | AUTOMATED PASS | 未录入时显示“有 6 家候选单位履约数据不完整，请先补充”，清标按钮禁用。 |
+| 履约缺失阻断清标 | AUTOMATED PASS | 未录入时按钮仍可点击，并在“暂不能进行清标测算”中列出具体单位、项目类型、加权分快照状态及补充入口。 |
 | 补齐后继续清标 | AUTOMATED PASS | 履约数据补齐后 readiness 变为可测算。 |
 | 多项目类型专业平均权重 | MANUAL REQUIRED | Excel 仍未给权重；当前最近 12 季度等权临时规则未改。 |
 
@@ -57,13 +57,13 @@
 
 | 验收项 | 状态 | 结果 |
 | --- | --- | --- |
-| 4 条推优规则、每条 4 个 K2 | AUTOMATED PASS | 浏览器配置 4 条规则并生成 16 行场景总览。 |
-| 允许 0 家剔除 | AUTOMATED PASS | 页面明确支持，Domain/应用测试覆盖空剔除集合。 |
-| 禁止剔除全部候选单位 | AUTOMATED PASS | UI readiness、action schema 和仓储校验覆盖。 |
-| 修改输入后结果 stale | AUTOMATED PASS | 清标完成后编辑候选分数，页面显示结果已过期并要求重算。 |
-| 一键生成 16 场景与有序 Top5 | AUTOMATED PASS | 浏览器校验总览恰为 16 行，并检查我方标识。 |
+| 4 条自动推优规则、每条 4 个 K2 | AUTOMATED PASS | 浏览器只读展示4条规则，一次生成16套场景并映射为按规则切换的分组宽表。 |
+| 8家规则数量 1/2/3/2 | AUTOMATED PASS | Domain 与浏览器均核对最高报价前1/2/3/2家。 |
+| 候选不足结构化阻断 | AUTOMATED PASS | 规则2对两家候选不缩减数量，返回 `QINGBIAO_INSUFFICIENT_CANDIDATES_FOR_EXCLUSION`。 |
+| 修改报价后结果 stale | AUTOMATED PASS | 编辑投标总价后页面显示结果过期，自动剔除名单同步刷新。 |
+| 一键生成 16 场景与有序 Top5 | AUTOMATED PASS | 浏览器校验数据库恰有16套场景，并检查宽表候选行及我方标识。 |
 | 规则1 / K2=0 人工基准 | AUTOMATED PASS | K1 `10.67%`、B `904.00 万元`、Top5 顺序与独立手算一致。 |
-| 规则3 / K2=2 人工基准 | AUTOMATED PASS | K1 `11.50%`、B `878.50 万元`、Top5 顺序与独立手算一致。 |
+| 规则3 / K2=2 自动基准 | AUTOMATED PASS | 六家样本自动剔除最高两家，K1 `9.50%`、B `896.50 万元`、Top5 顺序与独立手算一致。 |
 
 ## F. 定标
 
@@ -120,7 +120,7 @@
 ## 项目边界与危险操作审计
 
 - 候选单位 update/delete/set-our-company 必须同时匹配 `projectId + candidateId`。
-- 推优规则必须属于当前项目，候选 ID 集合也必须全部属于同一项目。
+- 推优规则必须属于当前项目；审计快照候选集合必须与 Repository 按当前项目最新报价复算的 Domain 结果一致。
 - 定标保存/清理必须验证 source qingbiao scenario 属于当前项目。
 - 全场景重算按当前项目和明确 source 集合替换；回归测试确认 Project A 重算不会改变 Project B 的结果计数。
 - 跨项目 rule ID、candidate ID、source scenario ID 的新增回归均为 `AUTOMATED PASS`。
@@ -136,7 +136,7 @@
 ## 自动化结论
 
 - `pnpm verify:release`：`PASS`；36 个 Vitest 文件、168 个唯一测试通过，production build 通过，七项关键 verify 通过。
-- Playwright Chromium：`3/3 PASS`。
+- Playwright Chromium：`10/10 PASS`。
 - 当前自动化测试总数：171（168 个 Vitest + 3 个 Playwright E2E）。
 - `dev.db` 运行前后 SHA-256 一致；Release verify 与 E2E 临时数据库均已清理。
 - 浏览器主流程：新建 → 参数 → 6 家候选 → 履约 → 4 规则 → 16 清标 → 定标 → 144 全场景，`PASS`。

@@ -118,7 +118,7 @@ model CompanyPerformance {
   project             Project?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   candidate           ProjectCandidate? @relation(fields: [candidateId, projectId], references: [id, projectId], onDelete: Cascade)
 
-  @@index([projectId, candidateId, projectType, year, quarter])
+  @@unique([projectId, candidateId, projectType, year, quarter])
   @@index([projectId, year, quarter])
   @@index([projectId, candidateId, projectType])
   @@index([companyName, projectType])

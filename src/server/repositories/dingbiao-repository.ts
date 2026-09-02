@@ -11,7 +11,7 @@ import {
 } from "@/domain/dingbiao";
 import {
   isQingbiaoK2,
-  QINGBIAO_20260820_RULE_VERSION,
+  CURRENT_QINGBIAO_RULE_VERSION,
   type QingbiaoK2Value,
 } from "@/domain/qingbiao";
 import type { PrismaClient } from "@/generated/prisma/client";
@@ -225,7 +225,7 @@ async function readSavedCalculationBySourceScenario(
     !source ||
     !isQingbiaoK2(source.qingbiaoK2) ||
     source.exclusionRuleId === null ||
-    source.ruleVersion !== QINGBIAO_20260820_RULE_VERSION ||
+    source.ruleVersion !== CURRENT_QINGBIAO_RULE_VERSION ||
     source.inputRevision !== source.project.qingbiaoInputRevision ||
     source.results.length === 0
   ) {
@@ -450,7 +450,7 @@ export function createPrismaDingbiaoRepository(
           projectId,
           version: CURRENT_QINGBIAO_VERSION,
           inputRevision: expectedQingbiaoInputRevision,
-          ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+          ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
           exclusionRuleId: { not: null },
           results: { some: {} },
         },
@@ -520,7 +520,7 @@ export function createPrismaDingbiaoRepository(
             projectId: input.projectId,
             version: CURRENT_QINGBIAO_VERSION,
             inputRevision: input.expectedQingbiaoInputRevision,
-            ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+            ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
             exclusionRuleId: { not: null },
           },
         });
@@ -572,7 +572,7 @@ export function createPrismaDingbiaoRepository(
             qingbiaoK2: input.qingbiaoK2Value,
             version: CURRENT_QINGBIAO_VERSION,
             inputRevision: input.expectedQingbiaoInputRevision,
-            ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+            ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
             exclusionRuleId: { not: null },
           },
           select: {

@@ -148,21 +148,11 @@ async function seedGoldenProject() {
     if (!pageData) {
       throw new Error("Golden E2E project is unavailable to Qingbiao.");
     }
-    for (const expectedRule of golden.exclusionRules) {
-      const rule = pageData.exclusionRules.find(
-        ({ ruleIndex }) => ruleIndex === expectedRule.ruleIndex,
-      );
-      if (!rule) {
-        throw new Error(`Golden E2E rule ${expectedRule.ruleIndex} is missing.`);
-      }
-      const saved = await qingbiaoRuntime.saveRuntimeQingbiaoExclusionRule(
-        golden.project.id,
-        rule.id,
-        expectedRule.excludedCandidateIds,
-      );
-      if (saved.status !== "saved") {
-        throw new Error(`Golden E2E rule ${expectedRule.ruleIndex} was not saved.`);
-      }
+    if (
+      pageData.exclusionRules.map(({ exclusionCount }) => exclusionCount).join(",") !==
+      "1,2,2,2"
+    ) {
+      throw new Error("Golden E2E automatic exclusion preview is incorrect.");
     }
     const qingbiao =
       await qingbiaoRuntime.calculateAllRuntimeQingbiaoScenarios(

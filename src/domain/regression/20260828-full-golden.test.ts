@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import Decimal from "decimal.js";
 import ExcelJS from "exceljs";
 import {
   mkdtempSync,
@@ -12,7 +13,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { fullGolden20260820Fixture as golden } from "@/domain/regression/fixtures/20260820-full-golden.fixture";
+import { fullGolden20260828Fixture as golden } from "@/domain/regression/fixtures/20260828-full-golden.fixture";
 import type { PrismaClient } from "@/generated/prisma/client";
 import {
   formatK1,
@@ -127,7 +128,7 @@ async function cleanGoldenData(client: PrismaClient) {
 beforeAll(async () => {
   previousDatabaseUrl = process.env.DATABASE_URL;
   temporaryDirectory = mkdtempSync(
-    join(tmpdir(), "zhuzhao-20260820-full-golden-"),
+    join(tmpdir(), "zhuzhao-20260828-full-golden-"),
   );
   usesExternalPostgresql = process.env.POSTGRES_GOLDEN === "1";
   if (usesExternalPostgresql) {
@@ -192,7 +193,7 @@ afterAll(async () => {
   }
 });
 
-describe("Golden Case 20260820-A full business flow", () => {
+describe("Golden Case 20260828-B automatic-exclusion full business flow", () => {
   it("matches DB, 16 Qingbiao, 144 Dingbiao, analysis and page view models", async () => {
     const client = requirePrisma();
     const runtime = requireRuntimeModules();
@@ -290,23 +291,39 @@ describe("Golden Case 20260820-A full business flow", () => {
         candidate.expectedPerformanceAverage,
       ]),
     );
+    expectAt(
+      "全部候选单位投标总价降序",
+      initialQingbiaoPage.candidates
+        .map((candidate) => ({
+          candidateId: candidate.id,
+          bidPrice: new Decimal(candidate.bidPrice),
+        }))
+        .toSorted(
+          (left, right) =>
+            right.bidPrice.comparedTo(left.bidPrice) ||
+            (left.candidateId === right.candidateId
+              ? 0
+              : left.candidateId < right.candidateId
+                ? -1
+                : 1),
+        )
+        .map((candidate) => candidate.candidateId),
+      golden.bidPriceOrder,
+    );
     expect(initialQingbiaoPage.exclusionRules).toHaveLength(4);
-
-    for (const expectedRule of golden.exclusionRules) {
-      const persistedRule = initialQingbiaoPage.exclusionRules.find(
-        ({ ruleIndex }) => ruleIndex === expectedRule.ruleIndex,
-      );
-      if (!persistedRule) {
-        throw new Error(`推优规则 ${expectedRule.ruleIndex} 未创建。`);
-      }
-      const saved =
-        await runtime.qingbiaoRuntime.saveRuntimeQingbiaoExclusionRule(
-          golden.project.id,
-          persistedRule.id,
-          expectedRule.excludedCandidateIds,
-        );
-      expectAt(`推优规则 ${expectedRule.ruleIndex} 保存状态`, saved.status, "saved");
-    }
+    expect(
+      initialQingbiaoPage.exclusionRules.map((rule) => ({
+        ruleIndex: rule.ruleIndex,
+        exclusionCount: rule.exclusionCount,
+        excludedCandidateIds: rule.excludedCandidateIds,
+      })),
+    ).toEqual(
+      golden.exclusionRules.map((rule) => ({
+        ruleIndex: rule.ruleIndex,
+        exclusionCount: rule.excludedCandidateIds.length,
+        excludedCandidateIds: [...rule.excludedCandidateIds],
+      })),
+    );
 
     const qingbiao =
       await runtime.qingbiaoRuntime.calculateAllRuntimeQingbiaoScenarios(
@@ -712,7 +729,7 @@ describe("Golden Case 20260820-A full business flow", () => {
       golden.expectedQingbiaoScenarios
         .filter(({ qingbiaoK2Value }) => qingbiaoK2Value === 0)
         .map(({ qingbiaoK1Fraction }) => formatK1(qingbiaoK1Fraction)),
-      ["10.00%", "9.00%", "11.50%", "11.00%"],
+      ["10.00%", "9.00%", "9.00%", "9.00%"],
     );
     expectAt(
       "Presentation Dingbiao raw/display boundary",
@@ -1081,7 +1098,7 @@ describe("Golden Case 20260820-A full business flow", () => {
     console.log("Analysis matched");
     console.log("Presentation matched");
     console.log("Excel workbook reparse matched");
-    console.log("Full Business Golden: PASS");
+    console.log("Full Business Golden 20260828-B: PASS");
     console.log("Status PASS");
   }, 120_000);
 });

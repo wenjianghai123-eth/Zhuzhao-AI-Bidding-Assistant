@@ -2,10 +2,11 @@ import type { PrismaClient } from "@/generated/prisma/client";
 
 import type { ProjectTypeValue } from "@/domain/projects/project-settings";
 import {
+  calculateAutomaticExclusionRules,
   isQingbiaoExclusionRuleIndex,
   isQingbiaoK2,
   qingbiaoK2ValueToRate,
-  QINGBIAO_20260820_RULE_VERSION,
+  CURRENT_QINGBIAO_RULE_VERSION,
   QINGBIAO_EXCLUSION_RULE_INDEXES,
   QINGBIAO_K2_VALUES,
   type QingbiaoCandidateV2Result,
@@ -40,7 +41,7 @@ export interface QingbiaoProjectExclusionRuleSnapshot {
   id: string;
   ruleIndex: QingbiaoExclusionRuleIndex;
   label: string | null;
-  excludedCandidateIds: readonly string[];
+  auditSnapshotCandidateIds: readonly string[];
 }
 
 export interface QingbiaoProjectSnapshot {
@@ -110,7 +111,12 @@ export interface QingbiaoScenarioCatalogSnapshot {
 export interface SaveQingbiaoCalculationV2Input {
   projectId: string;
   expectedInputRevision: number;
-  ruleVersion: typeof QINGBIAO_20260820_RULE_VERSION;
+  ruleVersion: typeof CURRENT_QINGBIAO_RULE_VERSION;
+  exclusionRuleSnapshots: readonly {
+    exclusionRuleId: string;
+    ruleIndex: QingbiaoExclusionRuleIndex;
+    excludedCandidateIds: readonly string[];
+  }[];
   scenarios: readonly QingbiaoScenarioV2Result[];
 }
 
@@ -210,7 +216,7 @@ async function readSavedCalculation(
     where: {
       projectId,
       version: CURRENT_SCENARIO_VERSION,
-      ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+      ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
       exclusionRuleId: { not: null },
     },
     select: {
@@ -334,16 +340,21 @@ function isValidScenarioBatch(
   input: SaveQingbiaoCalculationV2Input,
   project: {
     candidateIds: readonly string[];
+    automaticExclusionRules: readonly {
+      ruleIndex: QingbiaoExclusionRuleIndex;
+      excludedCandidateIds: readonly string[];
+    }[];
     exclusionRules: readonly {
       id: string;
       ruleIndex: number;
-      excludedCandidateIds: readonly string[];
     }[];
   },
 ) {
   if (
-    input.ruleVersion !== QINGBIAO_20260820_RULE_VERSION ||
+    input.ruleVersion !== CURRENT_QINGBIAO_RULE_VERSION ||
     input.scenarios.length !== EXPECTED_SCENARIO_COUNT ||
+    input.exclusionRuleSnapshots.length !==
+      QINGBIAO_EXCLUSION_RULE_INDEXES.length ||
     project.exclusionRules.length !== QINGBIAO_EXCLUSION_RULE_INDEXES.length
   ) {
     return false;
@@ -363,7 +374,22 @@ function isValidScenarioBatch(
     const rule = project.exclusionRules.find(
       (candidateRule) => candidateRule.ruleIndex === ruleIndex,
     );
-    if (!rule) {
+    const automaticRule = project.automaticExclusionRules.find(
+      (candidateRule) => candidateRule.ruleIndex === ruleIndex,
+    );
+    const submittedSnapshot = input.exclusionRuleSnapshots.find(
+      (snapshot) => snapshot.ruleIndex === ruleIndex,
+    );
+    if (
+      !rule ||
+      !automaticRule ||
+      !submittedSnapshot ||
+      submittedSnapshot.exclusionRuleId !== rule.id ||
+      !sameStringSet(
+        submittedSnapshot.excludedCandidateIds,
+        automaticRule.excludedCandidateIds,
+      )
+    ) {
       return false;
     }
 
@@ -373,17 +399,17 @@ function isValidScenarioBatch(
       );
       if (
         !scenario ||
-        scenario.metadata.ruleVersion !== QINGBIAO_20260820_RULE_VERSION ||
+        scenario.metadata.ruleVersion !== CURRENT_QINGBIAO_RULE_VERSION ||
         scenario.metadata.rankingCandidatePolicy !== "ALL_CANDIDATES" ||
         !sameStringSet(
           scenario.metadata.excludedCandidateIds,
-          rule.excludedCandidateIds,
+          automaticRule.excludedCandidateIds,
         ) ||
         !sameStringSet(
           scenario.metadata.k1CandidateIds,
           project.candidateIds.filter(
             (candidateId) =>
-              !rule.excludedCandidateIds.includes(candidateId),
+              !automaticRule.excludedCandidateIds.includes(candidateId),
           ),
         ) ||
         !sameStringSet(
@@ -466,7 +492,7 @@ export function createPrismaQingbiaoRepository(
                 id: rule.id,
                 ruleIndex: rule.ruleIndex,
                 label: rule.label,
-                excludedCandidateIds: rule.excludedCandidates.map(
+                auditSnapshotCandidateIds: rule.excludedCandidates.map(
                   ({ candidateId }) => candidateId,
                 ),
               },
@@ -542,12 +568,11 @@ export function createPrismaQingbiaoRepository(
           where: { id: input.projectId },
           select: {
             qingbiaoInputRevision: true,
-            candidates: { select: { id: true } },
+            candidates: { select: { id: true, bidPrice: true } },
             qingbiaoExclusionRules: {
               select: {
                 id: true,
                 ruleIndex: true,
-                excludedCandidates: { select: { candidateId: true } },
               },
             },
           },
@@ -562,14 +587,22 @@ export function createPrismaQingbiaoRepository(
           return { status: "input_revision_conflict" };
         }
 
+        const automaticExclusions = calculateAutomaticExclusionRules(
+          projectRecord.candidates.map((candidate) => ({
+            candidateId: candidate.id,
+            bidPrice: candidate.bidPrice.toString(),
+          })),
+        );
+        if (automaticExclusions.status === "invalid") {
+          return { status: "invalid_scenario_batch" };
+        }
+
         const project = {
           candidateIds: projectRecord.candidates.map(({ id }) => id),
+          automaticExclusionRules: automaticExclusions.rules,
           exclusionRules: projectRecord.qingbiaoExclusionRules.map((rule) => ({
             id: rule.id,
             ruleIndex: rule.ruleIndex,
-            excludedCandidateIds: rule.excludedCandidates.map(
-              ({ candidateId }) => candidateId,
-            ),
           })),
         };
         if (!isValidScenarioBatch(input, project)) {
@@ -579,6 +612,17 @@ export function createPrismaQingbiaoRepository(
         const rulesById = new Map(
           project.exclusionRules.map((rule) => [rule.id, rule]),
         );
+        for (const snapshot of input.exclusionRuleSnapshots) {
+          await transaction.qingbiaoExclusionRuleCandidate.deleteMany({
+            where: { exclusionRuleId: snapshot.exclusionRuleId },
+          });
+          await transaction.qingbiaoExclusionRuleCandidate.createMany({
+            data: snapshot.excludedCandidateIds.map((candidateId) => ({
+              exclusionRuleId: snapshot.exclusionRuleId,
+              candidateId,
+            })),
+          });
+        }
         for (const calculation of input.scenarios) {
           const exclusionRule = rulesById.get(
             calculation.metadata.exclusionRuleId,
@@ -607,6 +651,7 @@ export function createPrismaQingbiaoRepository(
               qingbiaoK1,
               qingbiaoK1Canonical: qingbiaoK1,
               isLegacy: exclusionRule.ruleIndex === 1,
+              version: CURRENT_SCENARIO_VERSION,
               inputRevision: input.expectedInputRevision,
               ruleVersion: input.ruleVersion,
             },

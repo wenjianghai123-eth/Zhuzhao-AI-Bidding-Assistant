@@ -3,24 +3,11 @@
 import {
   AlertTriangle,
   Calculator,
-  CheckCircle2,
   Clock3,
-  Loader2,
-  Play,
-  Save,
-  Trophy,
   UsersRound,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState, useTransition } from "react";
-import { toast } from "sonner";
+import { useState } from "react";
 
-import {
-  calculateQingbiaoAction,
-  saveQingbiaoExclusionRuleAction,
-} from "@/app/(dashboard)/projects/[id]/qingbiao/actions";
-import { updateExcludedCandidateSelection } from "@/features/qingbiao/exclusion-selection-state";
-import { getQingbiaoPageReadiness } from "@/features/qingbiao/qingbiao-page-policy";
 import { EmptyState } from "@/components/layout/empty-state";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +20,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
   TableBody,
@@ -43,11 +29,18 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { QingbiaoCalculationControl } from "@/features/qingbiao/components/qingbiao-calculation-control";
+import { QingbiaoConclusion } from "@/features/qingbiao/components/qingbiao-conclusion";
+import { QingbiaoEntryGuarantee } from "@/features/qingbiao/components/qingbiao-entry-guarantee";
+import {
+  buildQingbiaoResultViewModel,
+  QINGBIAO_RULE_PRESENTATIONS,
+  type QingbiaoResultTableRowViewModel,
+  type QingbiaoRuleResultViewModel,
+} from "@/features/qingbiao/qingbiao-result-view-model";
 import {
   QINGBIAO_EXCLUSION_RULE_INDEXES,
   QINGBIAO_K2_VALUES,
-  type QingbiaoExclusionRuleIndex,
-  type QingbiaoK2Value,
 } from "@/domain/qingbiao";
 import {
   formatDateTime,
@@ -55,508 +48,436 @@ import {
   formatScore,
 } from "@/lib/formatters";
 import { formatPercentageFraction } from "@/lib/percentage";
-import { formatK2 } from "@/lib/presentation";
 import { cn } from "@/lib/utils";
 import type {
+  QingbiaoAutomaticExclusionRulePageData,
   QingbiaoCandidatePageData,
   QingbiaoPageData,
 } from "@/server/application/qingbiao-service";
 import type {
   SavedQingbiaoCalculationSnapshot,
-  SavedQingbiaoScenarioSnapshot,
 } from "@/server/repositories/qingbiao-repository";
 
-type ExclusionSelections = Readonly<Record<string, readonly string[]>>;
-
-function initialExclusionSelections(data: QingbiaoPageData) {
-  return Object.fromEntries(
-    data.exclusionRules.map((rule) => [
-      rule.id,
-      [...rule.excludedCandidateIds],
-    ]),
-  ) satisfies ExclusionSelections;
-}
-
-function sameCandidateIds(left: readonly string[], right: readonly string[]) {
-  return (
-    left.length === right.length &&
-    left.every((candidateId) => right.includes(candidateId))
-  );
-}
-
-function findScenario(
-  calculation: SavedQingbiaoCalculationSnapshot,
-  ruleIndex: QingbiaoExclusionRuleIndex,
-  qingbiaoK2Value: QingbiaoK2Value,
-) {
-  return calculation.scenarios.find(
-    (scenario) =>
-      scenario.ruleIndex === ruleIndex &&
-      scenario.qingbiaoK2Value === qingbiaoK2Value,
-  );
-}
-
 function ExclusionRuleCard({
-  ruleId,
-  ruleIndex,
+  rule,
   candidates,
-  selectedCandidateIds,
-  dirty,
-  disabled,
-  onToggle,
-  onSave,
 }: {
-  ruleId: string;
-  ruleIndex: QingbiaoExclusionRuleIndex;
+  rule: QingbiaoAutomaticExclusionRulePageData;
   candidates: readonly QingbiaoCandidatePageData[];
-  selectedCandidateIds: readonly string[];
-  dirty: boolean;
-  disabled: boolean;
-  onToggle: (candidateId: string, checked: boolean) => void;
-  onSave: () => void;
 }) {
-  const selectedIds = useMemo(
-    () => new Set(selectedCandidateIds),
-    [selectedCandidateIds],
+  const candidatesById = new Map(
+    candidates.map((candidate) => [candidate.id, candidate]),
   );
-  const excludesAll =
-    candidates.length > 0 && selectedCandidateIds.length === candidates.length;
+  const excludedCandidates = rule.excludedCandidateIds.flatMap((candidateId) => {
+    const candidate = candidatesById.get(candidateId);
+    return candidate ? [candidate] : [];
+  });
+  const presentation = (() => {
+    switch (rule.ruleIndex) {
+      case 1:
+        return {
+          title: "推优单位随机剔除（1名最高报价投标人）",
+          description:
+            "将全部候选单位按投标总价从高到低排序，自动剔除报价最高的1家单位。",
+        };
+      case 2:
+        return {
+          title: "推优单位随机剔除（2名较高报价投标人）",
+          description:
+            "将全部候选单位按投标总价从高到低排序，自动剔除报价最高的前2家单位。",
+        };
+      case 3:
+        return {
+          title: "推优单位随机剔除（1/3较高报价投标人）",
+          description:
+            "以全部候选单位总数量为基数，计算总数量的1/3并四舍五入取整（结果不足1家时按1家计算）；按投标总价从高到低排序，自动剔除排名靠前的对应数量单位。",
+        };
+      case 4:
+        return {
+          title: "推优单位随机剔除（1/4较高报价投标人）",
+          description:
+            "以全部候选单位总数量为基数，计算总数量的1/4并四舍五入取整（结果不足1家时按1家计算）；按投标总价从高到低排序，自动剔除排名靠前的对应数量单位。",
+        };
+    }
+  })();
 
   return (
-    <Card className={cn(dirty && "ring-primary/25", excludesAll && "ring-destructive/40")}>
+    <Card data-testid={`automatic-exclusion-rule-${rule.ruleIndex}`}>
       <CardHeader className="border-b">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <CardTitle>规则{ruleIndex}</CardTitle>
+            <CardTitle>规则{rule.ruleIndex}</CardTitle>
             <CardDescription className="mt-1">
-              选择只从清标 K1 样本中剔除的单位
+              {presentation.title}
             </CardDescription>
           </div>
-          <Badge variant={selectedCandidateIds.length > 0 ? "default" : "outline"}>
-            已剔除 {selectedCandidateIds.length} 家
+          <Badge variant="default">
+            自动剔除 {rule.exclusionCount} 家
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="max-h-80 space-y-2 overflow-y-auto">
-        {candidates.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            暂无候选单位
+      <CardContent className="space-y-4">
+        <p className="text-sm leading-6 text-muted-foreground">
+          {presentation.description}
+        </p>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs font-medium text-muted-foreground">
+            自动剔除{rule.exclusionCount}家高报价单位：
           </p>
-        ) : (
-          candidates.map((candidate) => {
-            const checkboxId = `exclusion-${ruleId}-${candidate.id}`;
-            const checked = selectedIds.has(candidate.id);
-            return (
-              <label
-                key={candidate.id}
-                htmlFor={checkboxId}
-                className={cn(
-                  "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50",
-                  checked && "border-primary/40 bg-primary/5",
-                  disabled && "cursor-not-allowed opacity-60",
-                )}
-              >
-                <Checkbox
-                  id={checkboxId}
-                  checked={checked}
-                  disabled={disabled}
-                  onCheckedChange={(value) =>
-                    onToggle(candidate.id, value === true)
-                  }
-                  aria-label={`${candidate.companyName}，规则${ruleIndex}剔除单位`}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-center gap-1.5 font-medium">
-                    <span className="truncate">{candidate.companyName}</span>
-                    {candidate.isOurCompany ? <Badge>我方</Badge> : null}
-                  </span>
-                  <span className="mt-1 block text-xs text-muted-foreground tabular-nums">
-                    投标报价 {formatMoney(candidate.bidPrice)} · 净下浮率{" "}
-                    {formatPercentageFraction(
-                      candidate.netDiscountRateFraction,
-                    )}
-                  </span>
-                </span>
-              </label>
-            );
-          })
-        )}
-      </CardContent>
-      <CardFooter className="flex-col items-stretch gap-2">
-        {excludesAll ? (
-          <p className="text-sm text-destructive" role="alert">
-            当前推优规则已剔除全部候选单位，无法计算清标 K1。
-          </p>
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            允许保存 0 家剔除单位；剔除单位仍参与后续排名。
-          </p>
-        )}
-        <Button
-          type="button"
-          variant="outline"
-          disabled={disabled || !dirty || excludesAll || candidates.length === 0}
-          onClick={onSave}
-        >
-          {disabled ? <Loader2 className="animate-spin" /> : <Save />}
-          {dirty ? "保存剔除配置" : "配置已保存"}
-        </Button>
-      </CardFooter>
-    </Card>
-  );
-}
-
-function ScenarioMetrics({ scenario }: { scenario: SavedQingbiaoScenarioSnapshot }) {
-  const ourResult = scenario.orderedResults.find(
-    (candidate) => candidate.isOurCompany,
-  );
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-      <Card size="sm">
-        <CardContent>
-          <p className="text-xs text-muted-foreground">推优规则</p>
-          <p className="mt-2 text-xl font-semibold">规则{scenario.ruleIndex}</p>
-        </CardContent>
-      </Card>
-      <Card size="sm">
-        <CardContent>
-          <p className="text-xs text-muted-foreground">清标 K2</p>
-          <p className="mt-2 text-xl font-semibold tabular-nums">
-            {formatK2(scenario.qingbiaoK2Value)}
-          </p>
-        </CardContent>
-      </Card>
-      <Card size="sm">
-        <CardContent>
-          <p className="text-xs text-muted-foreground">参考报价 B</p>
-          <p className="mt-2 text-xl font-semibold tabular-nums">
-            {formatMoney(scenario.referencePriceB)}
-          </p>
-        </CardContent>
-      </Card>
-      <Card size="sm">
-        <CardContent>
-          <p className="text-xs text-muted-foreground">候选单位</p>
-          <p className="mt-2 text-xl font-semibold tabular-nums">
-            {scenario.orderedResults.length} 家
-          </p>
-        </CardContent>
-      </Card>
-      <Card size="sm">
-        <CardContent>
-          <p className="text-xs text-muted-foreground">我方表现</p>
-          <p className="mt-2 text-base font-semibold">
-            {ourResult
-              ? `第 ${ourResult.finalRank} 名 · ${
-                  ourResult.finalRank <= 5 ? "进入 Top5" : "未进入 Top5"
-                }`
-              : "未设置我方单位"}
-          </p>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function TopFive({ scenario }: { scenario: SavedQingbiaoScenarioSnapshot }) {
-  return (
-    <Card>
-      <CardHeader className="border-b">
-        <div className="flex items-center gap-2">
-          <Trophy className="size-4 text-amber-600" aria-hidden="true" />
-          <CardTitle>Top5</CardTitle>
-        </div>
-        <CardDescription>
-          保留当前 scenarioId 与最终排名顺序，不进行公司名称去重。
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-        {scenario.top5.map((candidate) => (
-          <div
-            key={`${scenario.scenarioId}-${candidate.finalRank}-${candidate.candidateId}`}
-            className={cn(
-              "flex items-center gap-2 rounded-lg border p-3",
-              candidate.isOurCompany && "border-primary/30 bg-primary/5",
+          <div className="mt-2 flex flex-wrap gap-2">
+            {excludedCandidates.length > 0 ? (
+              excludedCandidates.map((candidate) => (
+                <Badge key={candidate.id} variant="outline">
+                  {candidate.companyName}
+                </Badge>
+              ))
+            ) : (
+              <span className="text-sm text-muted-foreground">暂无候选单位</span>
             )}
-          >
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold tabular-nums">
-              {candidate.finalRank}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">
-              {candidate.companyName}
-            </span>
-            {candidate.isOurCompany ? <Badge>我方</Badge> : null}
           </div>
-        ))}
+        </div>
       </CardContent>
     </Card>
   );
 }
 
-function ScenarioResult({ scenario }: { scenario: SavedQingbiaoScenarioSnapshot }) {
-  return (
-    <div className="space-y-4">
-      <ScenarioMetrics scenario={scenario} />
-      <TopFive scenario={scenario} />
-      <Card>
-        <CardHeader className="border-b">
-          <CardTitle>
-            规则{scenario.ruleIndex} · K2={formatK2(scenario.qingbiaoK2Value)} 测算明细
-          </CardTitle>
-          <CardDescription>
-            商务优、技术优仅展示，当前不计入清标综合得分。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="overflow-x-auto px-0">
-          <Table className="min-w-420">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="pl-4 text-center">最终排名</TableHead>
-                <TableHead className="min-w-56">单位</TableHead>
-                <TableHead className="text-right">投标总价</TableHead>
-                <TableHead className="text-right">净下浮率</TableHead>
-                <TableHead className="text-right">履约平均分</TableHead>
-                <TableHead className="text-right">履约得分</TableHead>
-                <TableHead className="text-right">与B差额</TableHead>
-                <TableHead className="text-right">报价排名</TableHead>
-                <TableHead className="text-right">报价得分</TableHead>
-                <TableHead className="text-right">同类业绩</TableHead>
-                <TableHead className="text-right">其他主客观分</TableHead>
-                <TableHead className="text-right">商务优（不计分）</TableHead>
-                <TableHead className="text-right">技术优（不计分）</TableHead>
-                <TableHead className="pr-4 text-right">综合得分</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {scenario.orderedResults.map((candidate) => (
-                <TableRow
-                  key={candidate.candidateId}
-                  className={cn(candidate.isOurCompany && "bg-primary/5")}
-                >
-                  <TableCell className="pl-4 text-center font-semibold tabular-nums">
-                    {candidate.finalRank}
-                  </TableCell>
-                  <TableCell>
-                    <span className="flex items-center gap-2 font-medium">
-                      {candidate.companyName}
-                      {candidate.isOurCompany ? <Badge>我方</Badge> : null}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatMoney(candidate.bidPrice)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatPercentageFraction(
-                      candidate.netDiscountRateFraction,
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatScore(candidate.performanceAverage)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatScore(candidate.performanceScore)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatMoney(candidate.priceDifference)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {candidate.priceRank}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatScore(candidate.priceScore)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatScore(candidate.similarExperienceScore)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatScore(candidate.otherScore)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {formatScore(candidate.trademarkScore)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {formatScore(candidate.technicalScore)}
-                  </TableCell>
-                  <TableCell className="pr-4 text-right font-semibold tabular-nums">
-                    {formatScore(candidate.totalScore)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-    </div>
-  );
+const stickyHeaderClasses = [
+  "sticky left-0 z-30 w-14 min-w-14 bg-background",
+  "sticky left-14 z-30 min-w-56 bg-background",
+  "sticky left-[17.5rem] z-30 min-w-32 bg-background",
+  "sticky left-[25.5rem] z-30 min-w-28 bg-background",
+] as const;
+
+const stickyCellClasses = [
+  "sticky left-0 z-20 w-14 min-w-14 bg-background",
+  "sticky left-14 z-20 min-w-56 bg-background",
+  "sticky left-[17.5rem] z-20 min-w-32 bg-background",
+  "sticky left-[25.5rem] z-20 min-w-28 bg-background",
+] as const;
+
+function valueOrDash(
+  value: string | null,
+  formatter: (input: string) => string,
+) {
+  return value === null ? "—" : formatter(value);
 }
 
-function ScenarioOverview({
-  calculation,
+function QingbiaoResultRow({
+  row,
 }: {
-  calculation: SavedQingbiaoCalculationSnapshot;
+  row: QingbiaoResultTableRowViewModel;
 }) {
   return (
-    <section className="space-y-4" aria-labelledby="qingbiao-overview-title">
+    <TableRow className={cn(row.isOurCompany && "bg-primary/5")}>
+      <TableCell className={cn(stickyCellClasses[0], "text-center tabular-nums")}>
+        {row.displayOrder}
+      </TableCell>
+      <TableCell className={stickyCellClasses[1]}>
+        <span className="flex items-center gap-2 font-medium">
+          {row.companyName}
+          {row.isOurCompany ? <Badge>我方</Badge> : null}
+        </span>
+      </TableCell>
+      <TableCell className={cn(stickyCellClasses[2], "text-right tabular-nums")}>
+        {formatMoney(row.bidPrice)}
+      </TableCell>
+      <TableCell className={cn(stickyCellClasses[3], "text-right tabular-nums")}>
+        {formatPercentageFraction(row.netDiscountRateFraction)}
+      </TableCell>
+      <TableCell className="text-center">{row.businessPreferred ? "有" : "无"}</TableCell>
+      <TableCell className="text-center">{row.technicalPreferred ? "有" : "无"}</TableCell>
+      <TableCell className="text-right tabular-nums">
+        {formatScore(row.totalBidPriceScore)}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {valueOrDash(row.weightedPerformanceAverage, formatScore)}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {valueOrDash(row.performanceScore, formatScore)}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {formatScore(row.similarExperienceScore)}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {formatScore(row.otherScore)}
+      </TableCell>
+      <TableCell className="text-right font-medium tabular-nums">
+        {valueOrDash(row.averageK1Fraction, formatPercentageFraction)}
+      </TableCell>
+      {QINGBIAO_K2_VALUES.map((qingbiaoK2Value) => (
+        <TableCell
+          key={"total-" + qingbiaoK2Value}
+          className="bg-fuchsia-50/40 text-right font-medium tabular-nums"
+        >
+          {valueOrDash(row.k2TotalScores[qingbiaoK2Value], formatScore)}
+        </TableCell>
+      ))}
+      {QINGBIAO_K2_VALUES.flatMap((qingbiaoK2Value) => {
+        const draw = row.hypotheticalDraws[qingbiaoK2Value];
+        return [
+          <TableCell
+            key={"b-" + qingbiaoK2Value}
+            className="bg-purple-50/30 text-right tabular-nums"
+          >
+            {valueOrDash(draw.bValue, formatMoney)}
+          </TableCell>,
+          <TableCell
+            key={"difference-" + qingbiaoK2Value}
+            className="bg-purple-50/30 text-right tabular-nums"
+          >
+            {valueOrDash(draw.difference, formatMoney)}
+          </TableCell>,
+          <TableCell
+            key={"rank-" + qingbiaoK2Value}
+            className="bg-purple-50/30 text-right tabular-nums"
+          >
+            {draw.rank ?? "—"}
+          </TableCell>,
+          <TableCell
+            key={"score-" + qingbiaoK2Value}
+            className="bg-purple-50/30 text-right tabular-nums"
+          >
+            {valueOrDash(draw.priceScore, formatScore)}
+          </TableCell>,
+        ];
+      })}
+    </TableRow>
+  );
+}
+
+function QingbiaoResultWideTable({
+  rule,
+}: {
+  rule: QingbiaoRuleResultViewModel;
+}) {
+  return (
+    <Card>
+      <CardContent
+        className="overflow-x-auto px-0"
+        data-testid="qingbiao-result-horizontal-scroll"
+      >
+        <Table className="min-w-[240rem]" data-testid="qingbiao-result-wide-table">
+          <TableHeader>
+            <TableRow>
+              {[
+                "序号",
+                "单位名称",
+                "投标总价（万元）",
+                "净下浮率",
+              ].map((label, index) => (
+                <TableHead
+                  key={label}
+                  rowSpan={2}
+                  className={cn(
+                    stickyHeaderClasses[index],
+                    index === 0 ? "text-center" : "text-right",
+                  )}
+                >
+                  {label}
+                </TableHead>
+              ))}
+              {[
+                "商务优",
+                "技术优",
+                "总投标报价分值",
+                "履约加权平均分",
+                "履约得分",
+                "同类业绩",
+                "其他主客观分",
+                "平均值 K1",
+              ].map((label) => (
+                <TableHead key={label} rowSpan={2} className="min-w-28 text-right">
+                  {label}
+                </TableHead>
+              ))}
+              <TableHead
+                colSpan={4}
+                className="bg-fuchsia-100/80 text-center text-fuchsia-950"
+              >
+                清标 K2 对应总分
+              </TableHead>
+              {QINGBIAO_K2_VALUES.map((qingbiaoK2Value) => (
+                <TableHead
+                  key={qingbiaoK2Value}
+                  colSpan={4}
+                  className="bg-purple-100/80 text-center text-purple-950"
+                >
+                  假如抽中 {qingbiaoK2Value}%
+                </TableHead>
+              ))}
+            </TableRow>
+            <TableRow>
+              {QINGBIAO_K2_VALUES.map((qingbiaoK2Value) => (
+                <TableHead
+                  key={"total-header-" + qingbiaoK2Value}
+                  className="bg-fuchsia-50 text-center"
+                >
+                  {qingbiaoK2Value}%
+                </TableHead>
+              ))}
+              {QINGBIAO_K2_VALUES.flatMap((qingbiaoK2Value) =>
+                ["B值", "差值", "排序", "分数"].map((label) => (
+                  <TableHead
+                    key={qingbiaoK2Value + "-" + label}
+                    className="bg-purple-50 text-center"
+                  >
+                    {label}
+                  </TableHead>
+                )),
+              )}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rule.rows.map((row) => (
+              <QingbiaoResultRow key={row.candidateId} row={row} />
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
+function WeightedPerformanceWarning({
+  state,
+  projectId,
+}: {
+  state: "current" | "missing" | "stale";
+  projectId: string;
+}) {
+  if (state === "current") {
+    return null;
+  }
+  return (
+    <div
+      className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-950"
+      role="alert"
+      data-testid="qingbiao-weighted-performance-warning"
+    >
+      单位履约加权分{state === "stale" ? "已过期" : "尚未保存"}，本表【履约加权平均分】及【履约得分】暂按【—】显示。请到
+      <Button asChild variant="link" className="h-auto px-1 text-red-950 underline">
+        <a href={"/projects/" + projectId + "/performance"}>履约信息</a>
+      </Button>
+      重新计算并保存履约加权分后再进行清标测算。
+    </div>
+  );
+}
+
+function QingbiaoRuleExplanation({
+  rule,
+}: {
+  rule: QingbiaoRuleResultViewModel;
+}) {
+  return (
+    <div
+      className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950"
+      data-testid="qingbiao-current-rule-explanation"
+    >
+      当前展示规则【{rule.ruleLabel}】{rule.ruleDescription}，自动剔除{" "}
+      {rule.exclusionCount} 家高报价单位：
+      {rule.excludedCandidateNames.length > 0
+        ? rule.excludedCandidateNames.join("、")
+        : "暂无"}。
+    </div>
+  );
+}
+
+function CalculationNotes() {
+  return (
+    <div className="rounded-xl border bg-muted/30 p-4 text-sm leading-6 text-muted-foreground">
+      <p className="font-medium text-foreground">规则说明 / 计算说明</p>
+      <ul className="mt-2 list-disc space-y-1 pl-5">
+        <li>本表数据自动取自参数设置、候选单位和已保存的单位履约加权分。</li>
+        <li>履约加权分缺失或过期时显示“—”，旧值不作为当前结果展示。</li>
+        <li>
+          平均值 K1 按当前自动推优规则剔除高报价单位后，对剩余候选单位净下浮率执行“四舍五入到整数百分点 → 去重 → 求平均”。
+        </li>
+        <li>清标 K2 对应总分来自各 K2 场景已保存的综合得分。</li>
+        <li>“假如抽中 X%”直接展示该场景已保存的 B值、报价与B差值、排序及报价分数。</li>
+      </ul>
+    </div>
+  );
+}
+
+function QingbiaoResultTable({
+  pageData,
+  calculation,
+}: {
+  pageData: QingbiaoPageData;
+  calculation: SavedQingbiaoCalculationSnapshot;
+}) {
+  const [selectedTab, setSelectedTab] = useState("1");
+  const viewModel = buildQingbiaoResultViewModel(pageData, calculation);
+
+  return (
+    <section className="space-y-4" aria-labelledby="qingbiao-result-table-title">
       <div>
-        <h2 id="qingbiao-overview-title" className="text-lg font-semibold">
-          16场景总览
+        <h2 id="qingbiao-result-table-title" className="text-lg font-semibold">
+          清标测算表
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          每一行都是独立 scenarioId 下的有序 Top5，可作为后续定标来源。
+          一次读取16套场景快照，切换规则时仅切换只读视图。
         </p>
       </div>
-      <Card>
-        <CardContent className="overflow-x-auto px-0">
-          <Table className="min-w-320">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="pl-4">推优规则</TableHead>
-                <TableHead className="text-center">清标 K2</TableHead>
-                <TableHead className="text-right">清标 K1</TableHead>
-                <TableHead className="text-right">参考报价 B</TableHead>
-                {[1, 2, 3, 4, 5].map((rank) => (
-                  <TableHead key={rank}>第{rank}名</TableHead>
-                ))}
-                <TableHead className="pr-4 text-center">我方排名</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {calculation.scenarios.map((scenario) => {
-                const ourResult = scenario.orderedResults.find(
-                  (candidate) => candidate.isOurCompany,
-                );
-                return (
-                  <TableRow key={scenario.scenarioId}>
-                    <TableCell className="pl-4 font-medium">
-                      规则{scenario.ruleIndex}
-                    </TableCell>
-                    <TableCell className="text-center tabular-nums">
-                      {formatK2(scenario.qingbiaoK2Value)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatPercentageFraction(
-                        scenario.qingbiaoK1Fraction,
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatMoney(scenario.referencePriceB)}
-                    </TableCell>
-                    {[1, 2, 3, 4, 5].map((rank) => {
-                      const candidate = scenario.top5.find(
-                        (result) => result.finalRank === rank,
-                      );
-                      return (
-                        <TableCell
-                          key={`${scenario.scenarioId}-${rank}`}
-                          className={cn(
-                            "min-w-40",
-                            candidate?.isOurCompany && "font-semibold text-primary",
-                          )}
-                        >
-                          {candidate?.companyName ?? "—"}
-                        </TableCell>
-                      );
-                    })}
-                    <TableCell className="pr-4 text-center font-semibold tabular-nums">
-                      {ourResult ? `第 ${ourResult.finalRank} 名` : "未设置"}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <Tabs value={selectedTab} onValueChange={setSelectedTab} className="gap-4">
+        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-2 bg-transparent p-0">
+          <TabsTrigger
+            value="guide"
+            className="rounded-full border px-4 data-[state=active]:border-fuchsia-200 data-[state=active]:bg-fuchsia-100"
+          >
+            推优剔除规则
+          </TabsTrigger>
+          {viewModel.rules.map((rule) => (
+            <TabsTrigger
+              key={rule.ruleIndex}
+              value={String(rule.ruleIndex)}
+              className="rounded-full border px-4 data-[state=active]:border-fuchsia-200 data-[state=active]:bg-fuchsia-100"
+            >
+              {rule.ruleLabel}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <WeightedPerformanceWarning
+          state={viewModel.weightedPerformanceState}
+          projectId={pageData.projectId}
+        />
+        <TabsContent value="guide">
+          <Card>
+            <CardHeader>
+              <CardTitle>推优剔除规则说明</CardTitle>
+              <CardDescription>
+                4条规则均由系统按候选单位投标总价自动判定，不需要人工选择。
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-2">
+              {QINGBIAO_EXCLUSION_RULE_INDEXES.map((ruleIndex) => (
+                <div key={ruleIndex} className="rounded-lg border p-3">
+                  <p className="font-medium">
+                    规则{ruleIndex} · {QINGBIAO_RULE_PRESENTATIONS[ruleIndex].label}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {QINGBIAO_RULE_PRESENTATIONS[ruleIndex].shortDescription}。
+                  </p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        {viewModel.rules.map((rule) => (
+          <TabsContent key={rule.ruleIndex} value={String(rule.ruleIndex)}>
+            <div className="space-y-4">
+              <QingbiaoRuleExplanation rule={rule} />
+              <QingbiaoResultWideTable rule={rule} />
+              <CalculationNotes />
+            </div>
+          </TabsContent>
+        ))}
+      </Tabs>
     </section>
   );
 }
 
-function ScenarioNavigator({
-  calculation,
-}: {
-  calculation: SavedQingbiaoCalculationSnapshot;
-}) {
-  return (
-    <Tabs defaultValue="1" className="gap-5">
-      <TabsList className="grid w-full grid-cols-4 sm:w-lg">
-        {QINGBIAO_EXCLUSION_RULE_INDEXES.map((ruleIndex) => (
-          <TabsTrigger key={ruleIndex} value={String(ruleIndex)}>
-            规则{ruleIndex}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-      {QINGBIAO_EXCLUSION_RULE_INDEXES.map((ruleIndex) => {
-        const firstScenario = findScenario(calculation, ruleIndex, 0);
-        return (
-          <TabsContent key={ruleIndex} value={String(ruleIndex)}>
-            <div className="space-y-4">
-              <Card size="sm">
-                <CardContent className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs text-muted-foreground">
-                      规则{ruleIndex}当前推优规则 K1
-                    </p>
-                    <p className="mt-1 text-2xl font-semibold tabular-nums">
-                      {firstScenario
-                        ? formatPercentageFraction(
-                            firstScenario.qingbiaoK1Fraction,
-                          )
-                        : "—"}
-                    </p>
-                  </div>
-                  <p className="max-w-xl text-sm text-muted-foreground">
-                    同一规则的四个 K2 场景共享这一 K1；剔除单位仍参与报价和综合排名。
-                  </p>
-                </CardContent>
-              </Card>
-              <Tabs defaultValue="0" className="gap-5">
-                <TabsList className="grid w-full grid-cols-4 sm:w-lg">
-                  {QINGBIAO_K2_VALUES.map((qingbiaoK2Value) => (
-                    <TabsTrigger
-                      key={qingbiaoK2Value}
-                      value={String(qingbiaoK2Value)}
-                    >
-                      K2={formatK2(qingbiaoK2Value)}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-                {QINGBIAO_K2_VALUES.map((qingbiaoK2Value) => {
-                  const scenario = findScenario(
-                    calculation,
-                    ruleIndex,
-                    qingbiaoK2Value,
-                  );
-                  return (
-                    <TabsContent
-                      key={qingbiaoK2Value}
-                      value={String(qingbiaoK2Value)}
-                    >
-                      {scenario ? <ScenarioResult scenario={scenario} /> : null}
-                    </TabsContent>
-                  );
-                })}
-              </Tabs>
-            </div>
-          </TabsContent>
-        );
-      })}
-    </Tabs>
-  );
-}
-
 export function QingbiaoManager({ initialData }: { initialData: QingbiaoPageData }) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-  const operationLock = useRef(false);
-  const initialSelections = useMemo(
-    () => initialExclusionSelections(initialData),
-    [initialData],
-  );
-  const [draftSelections, setDraftSelections] =
-    useState<ExclusionSelections>(initialSelections);
-  const [savedSelections, setSavedSelections] =
-    useState<ExclusionSelections>(initialSelections);
   const [calculation, setCalculation] =
     useState<SavedQingbiaoCalculationSnapshot | null>(
       initialData.calculationState.calculation,
@@ -568,133 +489,13 @@ export function QingbiaoManager({ initialData }: { initialData: QingbiaoPageData
     initialData.currentInputRevision,
   );
   const [issues, setIssues] = useState<readonly string[]>([]);
-  const dirtyRuleIds = initialData.exclusionRules
-    .filter(
-      (rule) =>
-        !sameCandidateIds(
-          draftSelections[rule.id] ?? [],
-          savedSelections[rule.id] ?? [],
-        ),
-    )
-    .map((rule) => rule.id);
-  const invalidRuleIndexes = initialData.exclusionRules
-    .filter(
-      (rule) =>
-        initialData.candidates.length > 0 &&
-        (draftSelections[rule.id]?.length ?? 0) ===
-          initialData.candidates.length,
-    )
-    .map((rule) => rule.ruleIndex);
-  const missingPerformanceCount = initialData.candidates.filter(
-    (candidate) => candidate.performance.status === "missing",
-  ).length;
-  const hasFourRules = initialData.exclusionRules.length === 4;
-  const readiness = getQingbiaoPageReadiness({
-    candidateIds: initialData.candidates.map((candidate) => candidate.id),
-    rules: initialData.exclusionRules.map((rule) => ({
-      id: rule.id,
-      ruleIndex: rule.ruleIndex,
-      excludedCandidateIds: draftSelections[rule.id] ?? [],
-    })),
-    missingPerformanceCandidateIds: initialData.candidates
-      .filter((candidate) => candidate.performance.status === "missing")
-      .map((candidate) => candidate.id),
-    dirtyRuleIds,
-  });
-  const canCalculate = readiness.status === "ready";
-
-  function toggleCandidate(
-    ruleId: string,
-    candidateId: string,
-    checked: boolean,
-  ) {
-    setDraftSelections((current) => {
-      const selected = current[ruleId] ?? [];
-      return {
-        ...current,
-        [ruleId]: updateExcludedCandidateSelection(
-          selected,
-          candidateId,
-          checked,
-        ),
-      };
-    });
-    setIssues([]);
-  }
-
-  function saveRule(ruleId: string) {
-    if (operationLock.current || isPending) {
-      return;
-    }
-    const candidateIds = draftSelections[ruleId] ?? [];
-    operationLock.current = true;
-    setIssues([]);
-    startTransition(async () => {
-      try {
-        const result = await saveQingbiaoExclusionRuleAction(
-          initialData.projectId,
-          { exclusionRuleId: ruleId, candidateIds },
-        );
-        if (result.status === "success") {
-          setSavedSelections((current) => ({
-            ...current,
-            [ruleId]: [...result.candidateIds],
-          }));
-          setInputRevision(result.inputRevision);
-          if (result.changed && calculation) {
-            setCalculationStatus("stale");
-          }
-          toast.success(result.message);
-          router.refresh();
-          return;
-        }
-        if (result.status === "invalid") {
-          setIssues(result.issues);
-        }
-        toast.error(result.message);
-      } catch {
-        toast.error("推优规则保存失败，请稍后重试");
-      } finally {
-        operationLock.current = false;
-      }
-    });
-  }
-
-  function runCalculation() {
-    if (!canCalculate || operationLock.current || isPending) {
-      return;
-    }
-    operationLock.current = true;
-    setIssues([]);
-    startTransition(async () => {
-      try {
-        const result = await calculateQingbiaoAction(initialData.projectId);
-        if (result.status === "success") {
-          setCalculation(result.calculation);
-          setCalculationStatus("current");
-          setInputRevision(result.calculation.inputRevision);
-          toast.success(result.message);
-          router.refresh();
-          return;
-        }
-        if (result.status === "invalid") {
-          setIssues(result.issues);
-        }
-        toast.error(result.message);
-      } catch {
-        toast.error("清标测算请求失败，未保存任何新结果");
-      } finally {
-        operationLock.current = false;
-      }
-    });
-  }
 
   return (
     <div className="space-y-10">
       <PageHeader
         eyebrow="Qingbiao Calculation"
         title="清标测算"
-        description={`为“${initialData.projectName}”配置4套推优规则，并一次生成16套清标结果。`}
+        description={`“${initialData.projectName}”由系统自动判定4套推优剔除规则，并一次生成16套清标结果。`}
         actions={
           calculation ? (
             <Badge
@@ -717,10 +518,10 @@ export function QingbiaoManager({ initialData }: { initialData: QingbiaoPageData
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h2 id="exclusion-rules-title" className="text-lg font-semibold">
-              A. 推优剔除规则配置
+              A. 清标测算 · 推优剔除规则说明
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              当前暂定：剔除仅影响 K1 样本，不取消单位后续排名资格。
+              以下4种【推优单位随机剔除】规则由系统按候选单位投标总价自动判定执行，无需人工选择剔除单位。点击【清标测算】后，系统同时按4种规则独立计算，分别生成对应的K1、排名及结论。
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -732,16 +533,8 @@ export function QingbiaoManager({ initialData }: { initialData: QingbiaoPageData
           {initialData.exclusionRules.map((rule) => (
             <ExclusionRuleCard
               key={rule.id}
-              ruleId={rule.id}
-              ruleIndex={rule.ruleIndex}
+              rule={rule}
               candidates={initialData.candidates}
-              selectedCandidateIds={draftSelections[rule.id] ?? []}
-              dirty={dirtyRuleIds.includes(rule.id)}
-              disabled={isPending}
-              onToggle={(candidateId, checked) =>
-                toggleCandidate(rule.id, candidateId, checked)
-              }
-              onSave={() => saveRule(rule.id)}
             />
           ))}
         </div>
@@ -753,49 +546,21 @@ export function QingbiaoManager({ initialData }: { initialData: QingbiaoPageData
             B. 清标测算
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            系统读取4条已保存规则，按每条规则的 K2=0/1/2/3 一次计算并事务保存16套场景。
+            系统实时读取候选单位投标总价，自动生成4条规则快照，并按每条规则的 K2=0/1/2/3 一次计算并事务保存16套场景。
           </p>
         </div>
         <Card>
           <CardFooter className="flex-col items-stretch gap-3 border-t-0 sm:flex-row sm:items-center sm:justify-between">
-            <div id="qingbiao-readiness" className="text-sm">
-              {initialData.candidates.length === 0 ? (
-                <span className="flex items-center gap-2 text-amber-800">
-                  <AlertTriangle className="size-4" /> 请先录入候选单位。
-                </span>
-              ) : !hasFourRules ? (
-                <span className="flex items-center gap-2 text-amber-800">
-                  <AlertTriangle className="size-4" /> 当前项目缺少完整的4条推优规则。
-                </span>
-              ) : missingPerformanceCount > 0 ? (
-                <span className="flex items-center gap-2 text-amber-800">
-                  <AlertTriangle className="size-4" /> 有 {missingPerformanceCount}{" "}
-                  家候选单位履约数据不完整，请先补充。
-                </span>
-              ) : invalidRuleIndexes.length > 0 ? (
-                <span className="flex items-center gap-2 text-destructive">
-                  <AlertTriangle className="size-4" /> 规则
-                  {invalidRuleIndexes.join("、")} 已剔除全部候选单位。
-                </span>
-              ) : dirtyRuleIds.length > 0 ? (
-                <span className="flex items-center gap-2 text-amber-800">
-                  <AlertTriangle className="size-4" /> 请先保存全部已修改的推优规则。
-                </span>
-              ) : (
-                <span className="flex items-center gap-2 text-emerald-700">
-                  <CheckCircle2 className="size-4" /> 配置及履约数据完整，可以开始测算。
-                </span>
-              )}
-            </div>
-            <Button
-              type="button"
-              disabled={!canCalculate || isPending}
-              aria-describedby="qingbiao-readiness"
-              onClick={runCalculation}
-            >
-              {isPending ? <Loader2 className="animate-spin" /> : <Play />}
-              {isPending ? "正在处理" : "开始清标测算"}
-            </Button>
+            <QingbiaoCalculationControl
+              projectId={initialData.projectId}
+              initialReadiness={initialData.readiness}
+              onIssuesChange={setIssues}
+              onCalculated={(nextCalculation) => {
+                setCalculation(nextCalculation);
+                setCalculationStatus("current");
+                setInputRevision(nextCalculation.inputRevision);
+              }}
+            />
           </CardFooter>
         </Card>
         {issues.length > 0 ? (
@@ -816,34 +581,39 @@ export function QingbiaoManager({ initialData }: { initialData: QingbiaoPageData
       <section className="space-y-4" aria-labelledby="qingbiao-results-title">
         <div>
           <h2 id="qingbiao-results-title" className="text-lg font-semibold">
-            C. 清标结果
+            C. 清标测算结果
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            先选择推优规则，再查看该规则下四个 K2 场景的完整排名。
+            按推优规则切换同一批16场景快照的分组宽表视图。
           </p>
         </div>
         {calculationStatus === "stale" ? (
           <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            <p>推优规则、项目参数或候选单位已修改，以下结果已过期，请重新进行清标测算。</p>
+            <p>候选报价、项目参数或候选单位已修改，以下结果已过期，请重新进行清标测算。</p>
           </div>
         ) : null}
         {calculation ? (
-          <ScenarioNavigator calculation={calculation} />
+          <QingbiaoResultTable pageData={initialData} calculation={calculation} />
         ) : (
           <EmptyState
             icon={Calculator}
-            title="尚未生成新版清标结果"
-            description="保存4条推优规则并执行一次测算后，这里将展示16套结果。"
+            title="尚未生成清标结果"
+            description="请先完成清标测算，系统将在这里展示16套场景的分组宽表。"
           />
         )}
       </section>
 
-      {calculation ? <ScenarioOverview calculation={calculation} /> : null}
+      <QingbiaoConclusion
+        pageData={initialData}
+        calculation={calculation}
+        status={calculationStatus}
+      />
 
-      <div className="sr-only" aria-live="polite">
-        {isPending ? "清标操作正在执行" : ""}
-      </div>
+      <QingbiaoEntryGuarantee
+        projectId={initialData.projectId}
+        state={initialData.entryGuarantee}
+      />
     </div>
   );
 }

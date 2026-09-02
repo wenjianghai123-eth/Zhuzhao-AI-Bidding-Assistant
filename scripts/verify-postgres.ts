@@ -23,7 +23,7 @@ try {
       "exec",
       "vitest",
       "run",
-      "src/domain/regression/20260820-full-golden.test.ts",
+      "src/domain/regression/20260828-full-golden.test.ts",
       "--reporter=verbose",
     ],
     {

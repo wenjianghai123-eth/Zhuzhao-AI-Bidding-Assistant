@@ -6,6 +6,7 @@ vi.mock("@/server/repositories/performance-weighted-score-repository", () => ({
 
 import {
   getPerformanceWeightedPageData,
+  getPerformanceWeightedSnapshotStatus,
   getSavedPerformanceAverage,
   savePerformanceWeightedScores,
 } from "@/server/application/performance-weighted-score-service";
@@ -101,7 +102,7 @@ function createRepository(initial = createSource()) {
 }
 
 describe("project-scoped weighted performance application service", () => {
-  it("builds dynamic continuous quarter columns and distinct detail suggestions", async () => {
+  it("builds Q1-Q4 columns for every selected year and distinct grid rows", async () => {
     const { repository } = createRepository();
     const page = await getPerformanceWeightedPageData(
       "project-a",
@@ -110,9 +111,14 @@ describe("project-scoped weighted performance application service", () => {
     );
 
     expect(page?.quarters).toEqual([
+      { year: 2025, quarter: 1 },
+      { year: 2025, quarter: 2 },
       { year: 2025, quarter: 3 },
       { year: 2025, quarter: 4 },
       { year: 2026, quarter: 1 },
+      { year: 2026, quarter: 2 },
+      { year: 2026, quarter: 3 },
+      { year: 2026, quarter: 4 },
     ]);
     expect(page?.suggestedRows).toHaveLength(3);
     expect(page?.initialRows).toEqual(page?.suggestedRows);
@@ -385,6 +391,9 @@ describe("project-scoped weighted performance application service", () => {
       getPerformanceWeightedPageData("project-a", {}, state.repository),
     ).resolves.toMatchObject({ snapshotStatus: "stale" });
     await expect(
+      getPerformanceWeightedSnapshotStatus("project-a", state.repository),
+    ).resolves.toBe("stale");
+    await expect(
       getSavedPerformanceAverage(
         "project-a",
         "project-a-c1",
@@ -392,6 +401,17 @@ describe("project-scoped weighted performance application service", () => {
         state.repository,
       ),
     ).resolves.toMatchObject({ status: "missing_data", averageScore: null });
+  });
+
+  it("distinguishes a missing weighted snapshot from a missing project", async () => {
+    const state = createRepository();
+
+    await expect(
+      getPerformanceWeightedSnapshotStatus("project-a", state.repository),
+    ).resolves.toBe("not_saved");
+    await expect(
+      getPerformanceWeightedSnapshotStatus("missing-project", state.repository),
+    ).resolves.toBe("project_not_found");
   });
 
   it("rejects candidates from another project and leaves its source untouched", async () => {

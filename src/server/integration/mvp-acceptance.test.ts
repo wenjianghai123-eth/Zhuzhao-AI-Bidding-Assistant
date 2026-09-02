@@ -332,10 +332,10 @@ describe("MVP empty-database acceptance flow", () => {
         projectId,
         performanceFormData(ourCandidateId, candidateFixtures[0]),
       );
-    expect(duplicatePerformanceResult.status).toBe("success");
+    expect(duplicatePerformanceResult.status).toBe("failure");
     expect(
       await prisma.companyPerformance.count({ where: { projectId } }),
-    ).toBe(7);
+    ).toBe(6);
 
     const weightedPage =
       await performanceWeighted.getPerformanceWeightedPageData(projectId);
@@ -358,24 +358,16 @@ describe("MVP empty-database acceptance flow", () => {
     if (!qingbiaoBeforeCalculation) {
       throw new Error("Qingbiao page data should exist before calculation.");
     }
-    const exclusionsByRule = [
+    expect(
+      qingbiaoBeforeCalculation.exclusionRules.map((rule) =>
+        rule.excludedCandidateIds,
+      ),
+    ).toEqual([
       [sixthCandidateId],
-      [fifthCandidateId, sixthCandidateId],
-      [fourthCandidateId],
-      [],
-    ] as const;
-    for (const [index, rule] of qingbiaoBeforeCalculation.exclusionRules.entries()) {
-      const ruleExclusions = exclusionsByRule[index];
-      if (!ruleExclusions) {
-        throw new Error("Exclusion-rule acceptance fixture is incomplete.");
-      }
-      const saveRuleResult =
-        await qingbiaoActions.saveQingbiaoExclusionRuleAction(projectId, {
-          exclusionRuleId: rule.id,
-          candidateIds: ruleExclusions,
-        });
-      expect(saveRuleResult.status).toBe("success");
-    }
+      [sixthCandidateId, fifthCandidateId],
+      [sixthCandidateId, fifthCandidateId],
+      [sixthCandidateId, fifthCandidateId],
+    ]);
 
     const qingbiaoResult =
       await qingbiaoActions.calculateQingbiaoAction(projectId);
@@ -383,6 +375,11 @@ describe("MVP empty-database acceptance flow", () => {
     if (qingbiaoResult.status !== "success") {
       throw new Error(qingbiaoResult.message);
     }
+    expect(qingbiaoResult).toMatchObject({
+      code: "QINGBIAO_CALCULATED",
+      scenarioCount: 16,
+      message: "清标测算完成，共生成16套清标场景。",
+    });
     expect(qingbiaoResult.calculation.scenarios).toHaveLength(16);
     expect(
       new Set(
@@ -548,7 +545,7 @@ describe("MVP empty-database acceptance flow", () => {
           where: { scenario: { projectId } },
         }),
       ]);
-      expect(persistedCounts).toEqual([1, 6, 7, 16, 96, 9, 36]);
+      expect(persistedCounts).toEqual([1, 6, 6, 16, 96, 9, 36]);
     } finally {
       await freshPrisma.$disconnect();
     }

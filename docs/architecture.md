@@ -74,7 +74,7 @@ Domain 代码不依赖 React、Next.js、Prisma、数据库或浏览器 API。
 | 项目管理 | `/projects`、`/projects/new`、`/projects/[id]` | `Project` |
 | 参数设置 | `/projects/[id]/settings` | `ProjectRule`、项目类型关联 |
 | 候选单位 | `/projects/[id]/candidates` | `ProjectCandidate` |
-| 项目履约信息 | `/projects/[id]/performance` | 当前 Project 的 `CompanyPerformance`、`PerformanceQuarterArchive` |
+| 项目履约信息 | `/projects/[id]/performance` | 当前 Project 的季度唯一 `CompanyPerformance` 矩阵与正式加权分快照 |
 | 清标测算 | `/projects/[id]/qingbiao` | 清标 domain + 保存的清标场景/结果 |
 | 定标预测 | `/projects/[id]/dingbiao` | 定标 domain + 保存的定标场景/结果 |
 | 决策分析 | `/projects/[id]/analysis` | 只读保存的清标/定标结果 |
@@ -289,7 +289,7 @@ ranking candidate set = ALL_CANDIDATES
 
 场景以 `(exclusionRuleId, qingbiaoK2)` upsert。重算先按具体 `scenarioId` 删除旧 `QingbiaoResult`，再写入该场景完整结果，既不会产生第 17 个场景，也不会触及其他项目。`getQingbiaoScenarioCatalog(projectId)` 返回 16 项带 `scenarioId` 和每项 `finalRank` 的 Top5，作为 Step 6 定标来源选择的正式接口。
 
-页面用 `QingbiaoScenario.inputRevision` 与 `Project.qingbiaoInputRevision` 区分“尚未计算 / 当前有效 / 已过期”。履约明细、候选范围或项目类型变化先递增当前项目的 `performanceInputRevision`，使 `PerformanceWeightedSnapshot` 过期；保存新的加权分快照再递增清标/定标 revision。清标只读取与当前 performance revision 一致的项目级正式快照，并显式使用 `projectId + candidateId + projectType`，不存在同名公司跨项目混入。最近 12 季度公式仍位于 Domain，详见 `docs/performance-weighted-score.md`。
+页面用 `QingbiaoScenario.inputRevision` 与 `Project.qingbiaoInputRevision` 区分“尚未计算 / 当前有效 / 已过期”。季度唯一履约矩阵以 `projectId + candidateId + projectType + year + quarter` 为键；矩阵批量保存、正式加权分快照、performance revision 以及清标/定标失效 revision 位于同一事务。清标只读取与当前 performance revision 一致的项目级正式快照，并显式使用 `projectId + candidateId + projectType`，不存在同名公司跨项目混入。最近 12 季度公式仍位于 Domain，详见 `docs/performance-weighted-score.md`。
 
 新版清标、定标和 analysis 已不再假设项目只有 4 个 K2 场景。底层 `isLegacy` 标记仅用于保留历史兼容数据；当前定标目录和全场景 analysis 都按明确的 `sourceQingbiaoScenarioId`、规则版本与输入修订读取，不按 `ruleIndex=1` 或 `isLegacy=true` 筛选，也不赋予规则 1 特殊业务含义。
 

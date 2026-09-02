@@ -1,11 +1,17 @@
 import "dotenv/config";
 
 import {
+  CURRENT_QINGBIAO_RULE_VERSION,
+  QINGBIAO_20260820_RULE_VERSION,
+} from "../src/domain/qingbiao";
+import { buildQingbiaoResultViewModel } from "../src/features/qingbiao/qingbiao-result-view-model";
+import {
   calculateAllRuntimeQingbiaoScenarios,
   getRuntimeQingbiaoPageData,
+  getRuntimeQingbiaoReadiness,
   getRuntimeQingbiaoScenarioCatalog,
-  saveRuntimeQingbiaoExclusionRule,
 } from "../src/server/application/qingbiao-runtime-service";
+import { updateProjectCandidate } from "../src/server/application/project-candidate-service";
 import { assertSafeDestructiveDatabaseTarget } from "../src/server/db/database-target-safety";
 import { prisma } from "../src/server/db/prisma";
 import { saveSynchronizedPerformanceWeightedScores } from "../src/server/application/performance-weighted-score-service";
@@ -78,28 +84,28 @@ try {
     throw new Error(`Weighted performance save failed: ${weighted.status}`);
   }
 
+  const readiness = await getRuntimeQingbiaoReadiness(projectId);
+  if (!readiness?.ready || readiness.issues.length !== 0) {
+    throw new Error("The complete fixture did not pass Qingbiao readiness.");
+  }
+
   const pageData = await getRuntimeQingbiaoPageData(projectId);
   if (!pageData || pageData.exclusionRules.length !== 4) {
     throw new Error("The project did not expose four exclusion-rule slots.");
   }
   const firstExclusions = [
     ["verify-c6"],
-    ["verify-c5", "verify-c6"],
-    ["verify-c4"],
-    [],
+    ["verify-c6", "verify-c4"],
+    ["verify-c6", "verify-c4"],
+    ["verify-c6", "verify-c4"],
   ] as const;
   for (const [index, rule] of pageData.exclusionRules.entries()) {
     const excludedCandidateIds = firstExclusions[index];
     if (!excludedCandidateIds) {
       throw new Error("The exclusion fixture is incomplete.");
     }
-    const saved = await saveRuntimeQingbiaoExclusionRule(
-      projectId,
-      rule.id,
-      excludedCandidateIds,
-    );
-    if (saved.status !== "saved" && saved.status !== "unchanged") {
-      throw new Error(`Rule ${rule.ruleIndex} save failed: ${saved.status}`);
+    if (rule.excludedCandidateIds.join(",") !== excludedCandidateIds.join(",")) {
+      throw new Error(`Rule ${rule.ruleIndex} automatic preview is incorrect.`);
     }
   }
 
@@ -111,19 +117,38 @@ try {
     ({ scenarioId }) => scenarioId,
   );
 
-  const secondRule = pageData.exclusionRules.find(
-    ({ ruleIndex }) => ruleIndex === 2,
-  );
-  if (!secondRule) {
-    throw new Error("Rule 2 was not found.");
-  }
-  const changedRule = await saveRuntimeQingbiaoExclusionRule(
+  const updatedCandidate = await updateProjectCandidate(
     projectId,
-    secondRule.id,
-    ["verify-c1", "verify-c2"],
+    "verify-c1",
+    {
+      companyName: "Verification A",
+      bidPrice: "900",
+      netDiscountRate: "0.1038",
+      trademarkScore: "0",
+      technicalScore: "0",
+      similarExperienceScore: "5",
+      otherScore: "5",
+      isOurCompany: true,
+    },
   );
-  if (changedRule.status !== "saved") {
-    throw new Error(`Rule 2 update failed: ${changedRule.status}`);
+  if (updatedCandidate.status !== "updated") {
+    throw new Error(`Candidate bid update failed: ${updatedCandidate.status}`);
+  }
+  const stalePage = await getRuntimeQingbiaoPageData(projectId);
+  if (
+    stalePage?.calculationState.status !== "stale" ||
+    stalePage.exclusionRules[0]?.excludedCandidateIds[0] !== "verify-c1"
+  ) {
+    throw new Error("Latest bid price did not refresh automatic exclusions and stale state.");
+  }
+
+  await prisma.qingbiaoScenario.updateMany({
+    where: { projectId },
+    data: { version: 2, ruleVersion: QINGBIAO_20260820_RULE_VERSION },
+  });
+  const legacyPage = await getRuntimeQingbiaoPageData(projectId);
+  if (legacyPage?.calculationState.status !== "not_calculated") {
+    throw new Error("A legacy Qingbiao batch was exposed as a current result.");
   }
 
   const secondResult = await calculateAllRuntimeQingbiaoScenarios(projectId);
@@ -147,6 +172,23 @@ try {
   if (refreshedPage?.calculationState.status !== "current") {
     throw new Error("The recalculated page result is not current.");
   }
+  const refreshedCalculation = refreshedPage.calculationState.calculation;
+  const resultViewModel = buildQingbiaoResultViewModel(
+    refreshedPage,
+    refreshedCalculation,
+  );
+  if (
+    resultViewModel.rules.length !== 4 ||
+    resultViewModel.rules.some((rule) => rule.rows.length !== candidates.length) ||
+    [1, 2, 3, 4].some(
+      (ruleIndex) =>
+        refreshedCalculation.scenarios.filter(
+          (scenario) => scenario.ruleIndex === ruleIndex,
+        ).length !== 4,
+    )
+  ) {
+    throw new Error("The 4-rule × 4-K2 result view model is incomplete.");
+  }
   if (catalog.status !== "current" || catalog.catalog.scenarios.length !== 16) {
     throw new Error("The current 16-scenario catalog is unavailable.");
   }
@@ -156,19 +198,17 @@ try {
   if (firstScenarioIds.join(",") !== secondScenarioIds.join(",")) {
     throw new Error("Recalculation changed stable scenario identities.");
   }
-  const ruleTwoK2Zero = secondResult.calculation.scenarios.find(
+  const ruleOneK2Zero = secondResult.calculation.scenarios.find(
     ({ ruleIndex, qingbiaoK2Value }) =>
-      ruleIndex === 2 && qingbiaoK2Value === 0,
+      ruleIndex === 1 && qingbiaoK2Value === 0,
   );
   if (
-    !ruleTwoK2Zero ||
-    ruleTwoK2Zero.qingbiaoK1Fraction !== "0.135" ||
-    ruleTwoK2Zero.referencePriceB !== "878.5" ||
-    !ruleTwoK2Zero.orderedResults.some(
+    !ruleOneK2Zero ||
+    !ruleOneK2Zero.orderedResults.some(
       ({ candidateId }) => candidateId === "verify-c1",
     )
   ) {
-    throw new Error("Rule 2 did not preserve the V2 K1/ranking policy contract.");
+    throw new Error("Automatically excluded candidate did not retain ranking eligibility.");
   }
 
   console.log(
@@ -176,10 +216,23 @@ try {
       {
         scenariosAfterRecalculation: scenarioCount,
         resultsAfterRecalculation: resultCount,
+        readinessReady: readiness.ready,
+        automaticExclusionCounts: pageData.exclusionRules.map(
+          ({ exclusionCount }) => exclusionCount,
+        ),
+        domainScenarioCount: secondResult.calculation.scenarios.length,
         stableScenarioIdentities: true,
+        persistedRuleVersion: CURRENT_QINGBIAO_RULE_VERSION,
         catalogScenarioCount: catalog.catalog.scenarios.length,
-        ruleTwoK2ZeroK1: ruleTwoK2Zero.qingbiaoK1Fraction,
-        ruleTwoK2ZeroReferencePriceB: ruleTwoK2Zero.referencePriceB,
+        resultViewModelRuleCount: resultViewModel.rules.length,
+        resultViewModelK2Counts: resultViewModel.rules.map((rule) =>
+          refreshedCalculation.scenarios.filter(
+            (scenario) => scenario.ruleIndex === rule.ruleIndex,
+          ).length,
+        ),
+        refreshedRuleOneCandidateId: "verify-c1",
+        ruleOneK2ZeroK1: ruleOneK2Zero.qingbiaoK1Fraction,
+        ruleOneK2ZeroReferencePriceB: ruleOneK2Zero.referencePriceB,
         excludedCandidateStillRanked: true,
       },
       null,

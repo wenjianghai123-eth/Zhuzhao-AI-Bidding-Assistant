@@ -215,7 +215,7 @@ export function calculateQingbiaoScenarioV2(
     success: true,
     value: {
       metadata: {
-        ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+        ruleVersion: input.ruleVersion ?? QINGBIAO_20260820_RULE_VERSION,
         exclusionRuleId: input.scenario.exclusionRuleId,
         excludedCandidateIds: [...input.excludedCandidateIds],
         k1CandidateIds: k1Candidates.map(

@@ -14,8 +14,9 @@ import {
   type DingbiaoSimulationScenarioResult,
 } from "@/domain/dingbiao";
 import {
+  calculateAutomaticExclusionRules,
   calculateQingbiaoScenarioV2,
-  QINGBIAO_20260820_RULE_VERSION,
+  CURRENT_QINGBIAO_RULE_VERSION,
   QINGBIAO_K2_VALUES,
   type QingbiaoScenarioV2Result,
 } from "@/domain/qingbiao";
@@ -159,11 +160,26 @@ async function createProjectFixture() {
 }
 
 function calculateQingbiaoBatch(project: NonNullable<Awaited<ReturnType<ReturnType<typeof createPrismaQingbiaoRepository>["findProject"]>>>) {
+  const automaticExclusions = calculateAutomaticExclusionRules(
+    project.candidates.map((candidate) => ({
+      candidateId: candidate.id,
+      bidPrice: candidate.bidPrice,
+    })),
+  );
+  if (automaticExclusions.status !== "calculated") {
+    throw new Error("Decimal automatic-exclusion fixture failed.");
+  }
   return project.exclusionRules.flatMap((rule) =>
     QINGBIAO_K2_VALUES.map((qingbiaoK2Value): QingbiaoScenarioV2Result => {
+      const automaticRule = automaticExclusions.rules.find(
+        ({ ruleIndex }) => ruleIndex === rule.ruleIndex,
+      );
+      if (!automaticRule) {
+        throw new Error(`Decimal automatic rule ${rule.ruleIndex} is missing.`);
+      }
       const result = calculateQingbiaoScenarioV2({
         scenario: { exclusionRuleId: rule.id, qingbiaoK2Value },
-        excludedCandidateIds: rule.excludedCandidateIds,
+        excludedCandidateIds: automaticRule.excludedCandidateIds,
         candidates: project.candidates.map((candidate) => ({
           candidateId: candidate.id,
           bidPrice: candidate.bidPrice,
@@ -175,6 +191,7 @@ function calculateQingbiaoBatch(project: NonNullable<Awaited<ReturnType<ReturnTy
           otherScore: candidate.otherScore,
         })),
         rules: project.rules,
+        ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
         rankingCandidatePolicy: { mode: "ALL_CANDIDATES" },
       });
       if (!result.success) {
@@ -276,12 +293,37 @@ describe("Decimal Domain -> repository -> SQLite -> repository -> Domain", () =>
       throw new Error("Decimal Qingbiao project was not found.");
     }
     const qingbiaoBatch = calculateQingbiaoBatch(qingbiaoProject);
+    const automaticExclusions = calculateAutomaticExclusionRules(
+      qingbiaoProject.candidates.map((candidate) => ({
+        candidateId: candidate.id,
+        bidPrice: candidate.bidPrice,
+      })),
+    );
+    if (automaticExclusions.status !== "calculated") {
+      throw new Error("Decimal automatic snapshots were not calculated.");
+    }
+    const exclusionRuleSnapshots = automaticExclusions.rules.map(
+      (automaticRule) => {
+        const rule = qingbiaoProject.exclusionRules.find(
+          ({ ruleIndex }) => ruleIndex === automaticRule.ruleIndex,
+        );
+        if (!rule) {
+          throw new Error(`Decimal rule ${automaticRule.ruleIndex} is missing.`);
+        }
+        return {
+          exclusionRuleId: rule.id,
+          ruleIndex: automaticRule.ruleIndex,
+          excludedCandidateIds: automaticRule.excludedCandidateIds,
+        };
+      },
+    );
     expect(qingbiaoBatch).toHaveLength(16);
     expect(
       await qingbiaoRepository.saveCalculationV2({
         projectId,
         expectedInputRevision: qingbiaoProject.inputRevision,
-        ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+        ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
+        exclusionRuleSnapshots,
         scenarios: qingbiaoBatch,
       }),
     ).toEqual({ status: "saved" });
@@ -483,7 +525,7 @@ describe("Decimal Domain -> repository -> SQLite -> repository -> Domain", () =>
     const maxDelta = Decimal.max(...measurements.map(({ absoluteDelta }) => new Decimal(absoluteDelta)));
     expect(measurements.find(({ label }) => label === "finite decimal")?.absoluteDelta).toBe("0");
     expect(measurements.find(({ label }) => label === "very small percentage")?.absoluteDelta).toBe("0");
-    expect(new Decimal(measurements.find(({ label }) => label.includes("Qingbiao K1"))?.absoluteDelta ?? "0").greaterThan(0)).toBe(true);
+    expect(measurements.find(({ label }) => label.includes("Qingbiao K1"))?.absoluteDelta).toBe("0");
     expect(new Decimal(measurements.find(({ label }) => label === "high-value bid price")?.absoluteDelta ?? "0").equals("0.01")).toBe(true);
     expect(maxDelta.toString()).toBe("0.01");
 

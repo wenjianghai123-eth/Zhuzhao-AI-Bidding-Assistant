@@ -11,4 +11,5 @@ export const E2E_DATABASE_URL =
 export const E2E_USES_POSTGRESQL =
   E2E_DATABASE_URL.startsWith("postgresql:") ||
   E2E_DATABASE_URL.startsWith("postgres:");
-export const E2E_BASE_URL = "http://127.0.0.1:3100";
+export const E2E_BASE_URL =
+  process.env.E2E_BASE_URL ?? "http://127.0.0.1:3100";

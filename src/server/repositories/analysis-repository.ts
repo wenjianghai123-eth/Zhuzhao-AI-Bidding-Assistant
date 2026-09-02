@@ -12,7 +12,7 @@ import {
 import {
   isQingbiaoExclusionRuleIndex,
   isQingbiaoK2,
-  QINGBIAO_20260820_RULE_VERSION,
+  CURRENT_QINGBIAO_RULE_VERSION,
   QINGBIAO_EXCLUSION_RULE_INDEXES,
   QINGBIAO_K2_VALUES,
 } from "@/domain/qingbiao";
@@ -106,7 +106,7 @@ export function createPrismaAnalysisRepository(
             where: {
               version: CURRENT_QINGBIAO_VERSION,
               exclusionRuleId: { not: null },
-              ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+              ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
             },
             select: {
               id: true,
@@ -257,7 +257,7 @@ export function createPrismaAnalysisRepository(
           scenario.sourceQingbiaoScenario?.inputRevision !==
             project.qingbiaoInputRevision ||
           scenario.sourceQingbiaoScenario?.ruleVersion !==
-            QINGBIAO_20260820_RULE_VERSION,
+            CURRENT_QINGBIAO_RULE_VERSION,
       );
       const dingbiaoScenarios: AnalysisDingbiaoScenarioInput[] =
         project.dingbiaoScenarios.flatMap((scenario) => {
@@ -269,7 +269,7 @@ export function createPrismaAnalysisRepository(
             scenario.sourceQingbiaoScenario?.inputRevision !==
               project.qingbiaoInputRevision ||
             scenario.sourceQingbiaoScenario.ruleVersion !==
-              QINGBIAO_20260820_RULE_VERSION ||
+              CURRENT_QINGBIAO_RULE_VERSION ||
             scenario.sourceQingbiaoScenario.exclusionRuleId === null ||
             !isDingbiaoFinalistCount(scenario.finalistCount) ||
             scenario.finalDrawIndex === null ||

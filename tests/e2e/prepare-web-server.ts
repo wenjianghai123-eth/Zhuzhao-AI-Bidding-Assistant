@@ -15,9 +15,19 @@ const nextExecutable = join(
   "bin",
   "next",
 );
+const nextCommand = process.env.E2E_NEXT_COMMAND === "start" ? "start" : "dev";
+const serverHostname = process.env.E2E_SERVER_HOSTNAME ?? "127.0.0.1";
+const serverPort = process.env.E2E_SERVER_PORT ?? "3100";
 const server = spawn(
   process.execPath,
-  [nextExecutable, "dev", "--hostname", "127.0.0.1", "--port", "3100"],
+  [
+    nextExecutable,
+    nextCommand,
+    "--hostname",
+    serverHostname,
+    "--port",
+    serverPort,
+  ],
   {
     cwd: process.cwd(),
     env: { ...process.env, DATABASE_URL: E2E_DATABASE_URL },

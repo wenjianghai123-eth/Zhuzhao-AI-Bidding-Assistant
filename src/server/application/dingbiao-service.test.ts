@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { QINGBIAO_20260820_RULE_VERSION } from "@/domain/qingbiao";
+import { CURRENT_QINGBIAO_RULE_VERSION } from "@/domain/qingbiao";
 import {
   calculateDingbiaoForQingbiaoScenario,
   getDingbiaoPageData,
@@ -42,7 +42,7 @@ function createProject(): DingbiaoProjectSnapshot {
 function createCatalog(candidateCount = 5): QingbiaoScenarioCatalogSnapshot {
   return {
     inputRevision: 2,
-    ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+    ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
     calculatedAt: "2026-08-24T00:00:00.000Z",
     scenarios: ([1, 2, 3, 4] as const).flatMap((ruleIndex) =>
       ([0, 1, 2, 3] as const).map((qingbiaoK2Value) => ({

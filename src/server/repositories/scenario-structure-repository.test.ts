@@ -19,8 +19,9 @@ import {
   type FinalDrawIndex,
 } from "@/domain/dingbiao";
 import {
+  calculateAutomaticExclusionRules,
   calculateQingbiaoScenarioV2,
-  QINGBIAO_20260820_RULE_VERSION,
+  CURRENT_QINGBIAO_RULE_VERSION,
   QINGBIAO_K2_VALUES,
   type QingbiaoScenarioV2Result,
 } from "@/domain/qingbiao";
@@ -213,7 +214,7 @@ async function createSixteenQingbiaoScenarios() {
           referencePriceB: "820",
           qingbiaoK1: "0.1",
           inputRevision: 1,
-          ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+          ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
         },
       });
     }
@@ -230,14 +231,29 @@ function calculateV2ScenarioBatch(input: {
   if (!project) {
     throw new Error("Qingbiao V2 project fixture was not found.");
   }
+  const automaticExclusions = calculateAutomaticExclusionRules(
+    project.candidates.map((candidate) => ({
+      candidateId: candidate.id,
+      bidPrice: candidate.bidPrice,
+    })),
+  );
+  if (automaticExclusions.status !== "calculated") {
+    throw new Error("Automatic exclusion fixture could not be calculated.");
+  }
   return project.exclusionRules.flatMap((rule) =>
     QINGBIAO_K2_VALUES.map((qingbiaoK2Value) => {
+      const automaticRule = automaticExclusions.rules.find(
+        ({ ruleIndex }) => ruleIndex === rule.ruleIndex,
+      );
+      if (!automaticRule) {
+        throw new Error(`Automatic rule ${rule.ruleIndex} was not found.`);
+      }
       const calculation = calculateQingbiaoScenarioV2({
         scenario: {
           exclusionRuleId: rule.id,
           qingbiaoK2Value,
         },
-        excludedCandidateIds: rule.excludedCandidateIds,
+        excludedCandidateIds: automaticRule.excludedCandidateIds,
         candidates: project.candidates.map((candidate) => ({
           candidateId: candidate.id,
           bidPrice: candidate.bidPrice,
@@ -249,6 +265,7 @@ function calculateV2ScenarioBatch(input: {
           otherScore: candidate.otherScore,
         })),
         rules: project.rules,
+        ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
         rankingCandidatePolicy: { mode: "ALL_CANDIDATES" },
       });
       if (!calculation.success) {
@@ -263,6 +280,37 @@ function calculateV2ScenarioBatch(input: {
   );
 }
 
+function automaticExclusionSnapshots(
+  project: NonNullable<
+    Awaited<
+      ReturnType<ReturnType<typeof createPrismaQingbiaoRepository>["findProject"]>
+    >
+  >,
+) {
+  const calculation = calculateAutomaticExclusionRules(
+    project.candidates.map((candidate) => ({
+      candidateId: candidate.id,
+      bidPrice: candidate.bidPrice,
+    })),
+  );
+  if (calculation.status !== "calculated") {
+    throw new Error("Automatic exclusion snapshots could not be calculated.");
+  }
+  return calculation.rules.map((automaticRule) => {
+    const rule = project.exclusionRules.find(
+      ({ ruleIndex }) => ruleIndex === automaticRule.ruleIndex,
+    );
+    if (!rule) {
+      throw new Error(`Exclusion rule ${automaticRule.ruleIndex} is missing.`);
+    }
+    return {
+      exclusionRuleId: rule.id,
+      ruleIndex: automaticRule.ruleIndex,
+      excludedCandidateIds: automaticRule.excludedCandidateIds,
+    };
+  });
+}
+
 async function saveFullQingbiaoBatch() {
   await ensureRules();
   const repository = requireQingbiaoRepositoryFactory()(requireClient());
@@ -273,7 +321,8 @@ async function saveFullQingbiaoBatch() {
   const saved = await repository.saveCalculationV2({
     projectId,
     expectedInputRevision: project.inputRevision,
-    ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+    ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
+    exclusionRuleSnapshots: automaticExclusionSnapshots(project),
     scenarios: calculateV2ScenarioBatch({ project }),
   });
   if (saved.status !== "saved") {
@@ -332,7 +381,7 @@ async function createOtherProjectDingbiaoFixture() {
       referencePriceB: "910",
       qingbiaoK1: "0.1",
       inputRevision: 1,
-      ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+      ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
       results: {
         create: otherCandidateIds.map((candidateId, index) => ({
           candidateId,
@@ -498,7 +547,7 @@ afterAll(async () => {
   }
 });
 
-describe("qingbiao exclusion rule persistence", () => {
+describe("qingbiao exclusion rule audit-snapshot persistence", () => {
   it("ensures exactly four rule slots idempotently and rejects duplicate identity", async () => {
     const first = await ensureRules();
     const second = await first.repository.ensureForProject(projectId);
@@ -517,54 +566,43 @@ describe("qingbiao exclusion rule persistence", () => {
     ).rejects.toThrow();
   });
 
-  it("persists explicit excluded-candidate relations with rule-local uniqueness", async () => {
+  it("persists system-derived excluded candidates only when a calculation is saved", async () => {
     const { repository, rules } = await ensureRules();
-    const firstRule = rules[0];
-    const secondRule = rules[1];
-    if (!firstRule || !secondRule) {
-      throw new Error("Expected rule slots 1 and 2.");
+    expect(
+      rules.map(({ auditSnapshotCandidateIds }) => auditSnapshotCandidateIds),
+    ).toEqual([[], [], [], []]);
+
+    await saveFullQingbiaoBatch();
+    const refreshedRules = await repository.findByProjectId(projectId);
+    expect(
+      refreshedRules.map(
+        ({ auditSnapshotCandidateIds }) => auditSnapshotCandidateIds,
+      ),
+    ).toEqual([
+      [candidateIds[5]],
+      [candidateIds[4], candidateIds[5]],
+      [candidateIds[4], candidateIds[5]],
+      [candidateIds[4], candidateIds[5]],
+    ]);
+
+    const firstRule = refreshedRules[0];
+    if (!firstRule) {
+      throw new Error("Expected rule slot 1.");
     }
-
-    await expect(
-      repository.replaceExcludedCandidates({
-        projectId,
-        exclusionRuleId: firstRule.id,
-        candidateIds: [candidateIds[0], candidateIds[1]],
-      }),
-    ).resolves.toEqual({ status: "saved", inputRevision: 2 });
-    await expect(
-      repository.replaceExcludedCandidates({
-        projectId,
-        exclusionRuleId: firstRule.id,
-        candidateIds: [candidateIds[0], candidateIds[0]],
-      }),
-    ).resolves.toEqual({ status: "duplicate_candidate" });
-    await expect(
-      repository.replaceExcludedCandidates({
-        projectId,
-        exclusionRuleId: secondRule.id,
-        candidateIds: [candidateIds[0]],
-      }),
-    ).resolves.toEqual({ status: "saved", inputRevision: 3 });
-
-    expect(await repository.findExcludedCandidateIds(firstRule.id)).toEqual([
-      candidateIds[0],
-      candidateIds[1],
-    ]);
-    expect(await repository.findExcludedCandidateIds(secondRule.id)).toEqual([
-      candidateIds[0],
-    ]);
+    expect(
+      await repository.findAuditSnapshotCandidateIds(firstRule.id),
+    ).toEqual([candidateIds[5]]);
     await expect(
       requireClient().qingbiaoExclusionRuleCandidate.create({
         data: {
           exclusionRuleId: firstRule.id,
-          candidateId: candidateIds[0],
+          candidateId: candidateIds[5],
         },
       }),
     ).rejects.toThrow();
   });
 
-  it("rejects cross-project rule and candidate IDs without changing either project", async () => {
+  it("keeps audit snapshots scoped to their rule identity", async () => {
     await createOtherProjectDingbiaoFixture();
     const { repository, rules } = await ensureRules();
     const firstRule = rules[0];
@@ -572,25 +610,9 @@ describe("qingbiao exclusion rule persistence", () => {
       throw new Error("Expected the first project rule.");
     }
 
-    await expect(
-      repository.replaceExcludedCandidates({
-        projectId,
-        exclusionRuleId: "other-rule-1",
-        candidateIds: ["other-c1"],
-      }),
-    ).resolves.toEqual({ status: "exclusion_rule_not_found" });
-    await expect(
-      repository.replaceExcludedCandidates({
-        projectId,
-        exclusionRuleId: firstRule.id,
-        candidateIds: ["other-c1"],
-      }),
-    ).resolves.toEqual({ status: "candidate_project_mismatch" });
-    expect(await repository.findExcludedCandidateIds(firstRule.id)).toEqual(
-      [],
-    );
+    expect(await repository.findAuditSnapshotCandidateIds(firstRule.id)).toEqual([]);
     expect(
-      await repository.findExcludedCandidateIds("other-rule-1"),
+      await repository.findAuditSnapshotCandidateIds("other-rule-1"),
     ).toEqual([]);
   });
 });
@@ -774,29 +796,13 @@ describe("sixteen qingbiao scenario identities", () => {
 
 describe("qingbiao V2 transactional persistence", () => {
   it("upserts one 16-scenario batch, replaces results, and returns ranked Top5 identities", async () => {
-    const { repository: exclusionRepository, rules } = await ensureRules();
+    const { rules } = await ensureRules();
     const firstRule = rules[0];
     const secondRule = rules[1];
     const thirdRule = rules[2];
     if (!firstRule || !secondRule || !thirdRule) {
       throw new Error("Expected the first three exclusion rules.");
     }
-    await exclusionRepository.replaceExcludedCandidates({
-      projectId,
-      exclusionRuleId: firstRule.id,
-      candidateIds: [candidateIds[5]],
-    });
-    await exclusionRepository.replaceExcludedCandidates({
-      projectId,
-      exclusionRuleId: secondRule.id,
-      candidateIds: [candidateIds[4], candidateIds[5]],
-    });
-    await exclusionRepository.replaceExcludedCandidates({
-      projectId,
-      exclusionRuleId: thirdRule.id,
-      candidateIds: [candidateIds[3]],
-    });
-
     const repository = requireQingbiaoRepositoryFactory()(requireClient());
     const project = await repository.findProject(projectId);
     if (!project) {
@@ -809,7 +815,8 @@ describe("qingbiao V2 transactional persistence", () => {
       repository.saveCalculationV2({
         projectId,
         expectedInputRevision: project.inputRevision,
-        ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+        ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
+        exclusionRuleSnapshots: automaticExclusionSnapshots(project),
         scenarios,
       }),
     ).resolves.toEqual({ status: "saved" });
@@ -867,7 +874,8 @@ describe("qingbiao V2 transactional persistence", () => {
       repository.saveCalculationV2({
         projectId,
         expectedInputRevision: project.inputRevision,
-        ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+        ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
+        exclusionRuleSnapshots: automaticExclusionSnapshots(project),
         scenarios,
       }),
     ).resolves.toEqual({ status: "saved" });
@@ -916,7 +924,8 @@ describe("qingbiao V2 transactional persistence", () => {
       repository.saveCalculationV2({
         projectId,
         expectedInputRevision: project.inputRevision,
-        ruleVersion: QINGBIAO_20260820_RULE_VERSION,
+        ruleVersion: CURRENT_QINGBIAO_RULE_VERSION,
+        exclusionRuleSnapshots: automaticExclusionSnapshots(project),
         scenarios: scenarios.slice(0, 15),
       }),
     ).resolves.toEqual({ status: "invalid_scenario_batch" });

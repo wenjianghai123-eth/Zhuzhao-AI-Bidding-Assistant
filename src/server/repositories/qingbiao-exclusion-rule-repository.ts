@@ -14,7 +14,7 @@ export interface QingbiaoExclusionRuleSnapshot {
   projectId: string;
   ruleIndex: QingbiaoExclusionRuleIndex;
   label: string | null;
-  excludedCandidateIds: readonly string[];
+  auditSnapshotCandidateIds: readonly string[];
 }
 
 export interface QingbiaoScenarioIdentitySnapshot {
@@ -42,14 +42,6 @@ export type EnsureQingbiaoExclusionRulesResult =
     }
   | { status: "project_not_found" };
 
-export type ReplaceExcludedCandidatesResult =
-  | { status: "saved"; inputRevision: number }
-  | { status: "unchanged"; inputRevision: number }
-  | { status: "exclusion_rule_not_found" }
-  | { status: "candidate_project_mismatch" }
-  | { status: "duplicate_candidate" }
-  | { status: "all_candidates_excluded" };
-
 export interface QingbiaoExclusionRuleRepository {
   ensureForProject(
     projectId: string,
@@ -57,14 +49,9 @@ export interface QingbiaoExclusionRuleRepository {
   findByProjectId(
     projectId: string,
   ): Promise<readonly QingbiaoExclusionRuleSnapshot[]>;
-  findExcludedCandidateIds(
+  findAuditSnapshotCandidateIds(
     exclusionRuleId: string,
   ): Promise<readonly string[]>;
-  replaceExcludedCandidates(input: {
-    projectId: string;
-    exclusionRuleId: string;
-    candidateIds: readonly string[];
-  }): Promise<ReplaceExcludedCandidatesResult>;
   findScenario(input: {
     exclusionRuleId: string;
     qingbiaoK2Value: QingbiaoK2Value;
@@ -93,7 +80,7 @@ function mapRule(rule: {
     projectId: rule.projectId,
     ruleIndex: rule.ruleIndex,
     label: rule.label,
-    excludedCandidateIds: rule.excludedCandidates.map(
+    auditSnapshotCandidateIds: rule.excludedCandidates.map(
       ({ candidateId }) => candidateId,
     ),
   };
@@ -179,98 +166,13 @@ export function createPrismaQingbiaoExclusionRuleRepository(
       });
     },
 
-    async findExcludedCandidateIds(exclusionRuleId) {
+    async findAuditSnapshotCandidateIds(exclusionRuleId) {
       const records = await client.qingbiaoExclusionRuleCandidate.findMany({
         where: { exclusionRuleId },
         select: { candidateId: true },
         orderBy: [{ createdAt: "asc" }, { candidateId: "asc" }],
       });
       return records.map(({ candidateId }) => candidateId);
-    },
-
-    async replaceExcludedCandidates(input) {
-      if (new Set(input.candidateIds).size !== input.candidateIds.length) {
-        return { status: "duplicate_candidate" };
-      }
-
-      return client.$transaction(async (transaction) => {
-        const exclusionRule = await transaction.qingbiaoExclusionRule.findFirst({
-          where: {
-            id: input.exclusionRuleId,
-            projectId: input.projectId,
-          },
-          select: {
-            projectId: true,
-            excludedCandidates: { select: { candidateId: true } },
-          },
-        });
-        if (!exclusionRule) {
-          return { status: "exclusion_rule_not_found" };
-        }
-
-        const [candidateCount, matchingCandidateCount] = await Promise.all([
-          transaction.projectCandidate.count({
-            where: { projectId: exclusionRule.projectId },
-          }),
-          transaction.projectCandidate.count({
-            where: {
-              projectId: exclusionRule.projectId,
-              id: { in: [...input.candidateIds] },
-            },
-          }),
-        ]);
-        if (matchingCandidateCount !== input.candidateIds.length) {
-          return { status: "candidate_project_mismatch" };
-        }
-        if (candidateCount === input.candidateIds.length) {
-          return { status: "all_candidates_excluded" };
-        }
-
-        const currentCandidateIds = exclusionRule.excludedCandidates.map(
-          ({ candidateId }) => candidateId,
-        );
-        const isUnchanged =
-          currentCandidateIds.length === input.candidateIds.length &&
-          currentCandidateIds.every((candidateId) =>
-            input.candidateIds.includes(candidateId),
-          );
-        if (isUnchanged) {
-          const project = await transaction.project.findUnique({
-            where: { id: input.projectId },
-            select: { qingbiaoInputRevision: true },
-          });
-          return project
-            ? {
-                status: "unchanged",
-                inputRevision: project.qingbiaoInputRevision,
-              }
-            : { status: "exclusion_rule_not_found" };
-        }
-
-        await transaction.qingbiaoExclusionRuleCandidate.deleteMany({
-          where: { exclusionRuleId: input.exclusionRuleId },
-        });
-        if (input.candidateIds.length > 0) {
-          await transaction.qingbiaoExclusionRuleCandidate.createMany({
-            data: input.candidateIds.map((candidateId) => ({
-              exclusionRuleId: input.exclusionRuleId,
-              candidateId,
-            })),
-          });
-        }
-        const project = await transaction.project.update({
-          where: { id: input.projectId },
-          data: {
-            qingbiaoInputRevision: { increment: 1 },
-            dingbiaoInputRevision: { increment: 1 },
-          },
-          select: { qingbiaoInputRevision: true },
-        });
-        return {
-          status: "saved",
-          inputRevision: project.qingbiaoInputRevision,
-        };
-      });
     },
 
     async findScenario(input) {

@@ -122,7 +122,7 @@ erDiagram
     }
 ```
 
-`ProjectRuleProjectType`、`QingbiaoExclusionRuleCandidate` 和 `QingbiaoScenarioCandidate` 均为显式多选关联。正式履约数据由 `CompanyPerformance.projectId` 归属工程项目，并以复合外键 `(candidateId, projectId) → ProjectCandidate(id, projectId)` 保证履约单位确实属于同一项目；`companyName` 只保留写入时的审计快照，不再承担跨项目关联。`PerformanceQuarterArchive` 同样属于 Project。
+`ProjectRuleProjectType`、`QingbiaoExclusionRuleCandidate` 和 `QingbiaoScenarioCandidate` 均为显式多选关联。正式履约数据由 `CompanyPerformance.projectId` 归属工程项目，并以复合外键 `(candidateId, projectId) → ProjectCandidate(id, projectId)` 保证履约单位确实属于同一项目；`companyName` 只保留写入时的审计快照，不再承担跨项目关联。`CompanyPerformance` 的 `(projectId, candidateId, projectType, year, quarter)` 是季度唯一键；空白季度以无记录表达。`PerformanceQuarterArchive` 仅作为旧版兼容数据保留，不再是履约页面或清标的输入。
 
 `projectId` / `candidateId` 暂时可空仅服务 staged migration：旧全局记录若无法通过公司名称唯一匹配到恰好一个项目候选单位，就保留为 legacy/unassigned，项目页面、清标查询和所有新写入都不会读取或产生这类空归属记录。现有开发库经迁移审计，28 条履约和 4 条归档全部可可靠归属，未产生 legacy 行。
 
@@ -132,19 +132,9 @@ erDiagram
 
 `bidPrice` 始终以 Decimal 字符串按万元保存；`netDiscountRate` 在 UI/CSV/粘贴预览中使用百分点，进入 Application/Domain 前转换为 fraction，例如 UI `17.8` 保存为 `0.178`。批量粘贴通过一次事务创建多行并只递增一次 `qingbiaoInputRevision` / `dingbiaoInputRevision`。候选名称修改继续更新原 ID；删除、更新、设置我方单位均使用 `projectId + candidateId` 做项目范围验证。
 
-### 2.2 履约季度归档
+### 2.2 旧季度归档兼容
 
-逐条 `CompanyPerformance` 写入仍然代表履约记录已经持久化，但不再被错误解释为“季度已正式保存”。`PerformanceQuarterArchive` 记录用户对某个项目内 `projectId + year + quarter` 执行过正式归档：
-
-- `(projectId, year, quarter)` 唯一，`quarter` 由 SQLite/PostgreSQL migration 的 `CHECK` 约束为 1 至 4；
-- 归档行存在且该季度当前有履约记录时，季度状态为 `saved`；
-- 该季度有履约记录但没有归档行时，状态为 `pending`；
-- 该季度当前没有履约记录时，状态为 `empty`；
-- `recordCount` 不复制到归档表，由 `CompanyPerformance` 按 `projectId + year + quarter` 只读聚合，避免其他项目或陈旧快照混入；
-- `savedQuarterCount` 只统计 `saved` 季度，`totalSavedRecordCount` 只累加这些季度当前实际存在的履约记录；
-- 一览查询和筛选始终隐含当前 `projectId`，不会写数据库，也不会递增项目的清标/定标输入修订号；正式归档只写当前项目的 `PerformanceQuarterArchive`，同样不改变项目修订号。
-
-已归档季度的履约记录当前仍可按原流程增删改。本次没有擅自规定“编辑后自动退回待保存”或“直接更新已归档快照”；归档标记会保留，只要季度仍有记录就继续显示 `saved`，若记录全部删除则一览按事实显示 `empty`。编辑后的归档业务语义仍待确认。
+`PerformanceQuarterArchive` 仅保留旧版审计记录与迁移兼容，不再由履约页面创建，也不参与矩阵保存、履约加权或清标读取。正式季度数据直接由 `CompanyPerformance` 的季度唯一键表达；矩阵保存与 `PerformanceWeightedSnapshot` / `PerformanceWeightedScore` 在同一事务中完成。
 
 ## 3. 推优剔除规则
 
@@ -295,27 +285,27 @@ sourceQingbiaoScenarioId + finalistCount + finalDrawIndex
 
 完整字段审计与兼容边界见 `docs/qingbiao-parameter-audit.md`。
 
-## 12. Step 5 实际持久化契约（2026-08-24）
+## 12. 清标实际持久化契约（2026-08-28）
 
 新版清标 Application 已正式使用现有模型保存 16 场景：
 
 ```text
 Project
   -> QingbiaoExclusionRule × 4
-     -> QingbiaoExclusionRuleCandidate × 0..n
+     -> QingbiaoExclusionRuleCandidate × 系统判定审计快照
      -> QingbiaoScenario × K2(0,1,2,3)
         -> QingbiaoResult × 全部排名候选
 ```
 
-- 剔除关系保存稳定 `candidateId`，不保存公司名称作为关联。
-- 同一规则允许 0 个剔除单位；禁止剔除当前项目全部候选单位。
-- 规则关联替换、输入修订递增在同一事务中完成，未变化的集合不递增修订号。
+- 剔除关系保存稳定 `candidateId`，语义是最近一次成功清标测算时由系统按报价判定的审计快照，不是用户配置。
+- UI、Server Action 和 Application 均没有手工写入 `excludedCandidateIds` 的入口。
+- Repository 在保存批次的同一事务中按数据库最新 Decimal 报价复算4套规则；提交快照不一致时拒绝整批。
 - 一个成功批次必须恰有 4 条规则、每条恰有 4 个 K2，共 16 个唯一身份。
 - 每个场景的 `QingbiaoResult` 必须覆盖当前项目全部候选单位，因为当前排名策略为 `ALL_CANDIDATES`。
 - `qingbiaoK1` 和候选 `netDiscountRate` 均保存 fraction；`qingbiaoK2` 的 `0..3` 是受控 identity，由 Domain 转换为 `0..0.03`。
 - Top5 不重复落表，由每个场景中 `finalRank <= 5` 的有序结果派生。
 
-当前 schema 没有独立 calculation batch 表。事务完整性通过 `saveCalculationV2()` 的整批前置校验和单事务 upsert/replace 保证；场景唯一键保证重算复用身份。所有 16 条记录保存同一 `inputRevision` 与 `qingbiao-20260820-v2`，查询只有在完整读到同版本 16 条时才返回新版计算快照。
+当前 schema 没有独立 calculation batch 表。事务完整性通过 `saveCalculationV2()` 的整批前置校验和单事务 upsert/replace 保证；场景唯一键保证重算复用身份。所有 16 条记录保存同一 `inputRevision` 与 `qingbiao-20260828-auto-high-bid-v3`，查询只有在完整读到同版本 16 条时才返回当前计算快照。
 
 旧 `QingbiaoScenarioCandidate`、nullable 关联和 `isLegacy` 字段继续保留，不作为新版剔除关系或新版页面查询依据。为让未升级的定标/analysis 暂时工作，规则 1 的四个 V2 场景仍写 `isLegacy=true`；规则 2–4 写 `false`。
 
